@@ -21,7 +21,7 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# Colonnes de l'interface (Parfaitement adaptées à ton fichier Excel)
+# Colonnes de l'interface
 COL_STANDARDS = ["Matériau", "Nom", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)"]
 COL_PROFILS = ["Nom", "Longueur Barre (mm)", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)", "Couleur", "Longueur Peinture (mm)", "Quantité en stock"]
 COL_LISTES = ["Référence", "Profil", "Longueur (mm)", "Quantité", "Angle Gauche (°)", "Angle Droite (°)", "Symétrique"]
@@ -92,7 +92,6 @@ def formater_df_listes(df):
     df["Quantité"] = pd.to_numeric(df["Quantité"], errors='coerce').astype('Int64')
     df["Angle Gauche (°)"] = pd.to_numeric(df["Angle Gauche (°)"], errors='coerce')
     df["Angle Droite (°)"] = pd.to_numeric(df["Angle Droite (°)"], errors='coerce')
-    # Symétrique est décoché par défaut si la colonne n'existe pas dans l'Excel !
     df["Symétrique"] = df["Symétrique"].fillna(False).astype(bool)
     return df
 
@@ -106,14 +105,12 @@ if 'workspace' not in st.session_state:
         db_profils = requete_get("gp_debit_profils")
         db_pieces = requete_get("gp_debit_pieces")
         
-        # 1. Traitement des standards
         if db_standards:
             std_data = [{"Matériau": r.get("materiau", ""), "Nom": r["nom_profil"], "Section A (mm)": r.get("section_a"), "Section B (mm)": r.get("section_b"), "Épaisseur (mm)": r.get("epaisseur"), "Poids (kg/m)": r.get("poids_ml")} for r in db_standards]
             st.session_state.df_standards_base = formater_df_standards(pd.DataFrame(std_data))
         else:
             st.session_state.df_standards_base = pd.DataFrame(columns=COL_STANDARDS)
             
-        # 2. Reconstruction de l'espace de travail
         if db_projets:
             new_workspace = {}
             for proj in db_projets:
@@ -155,12 +152,11 @@ if 'workspace' not in st.session_state:
         st.session_state.liste_active = "Liste 1"
 
 # -----------------------------------------------------------------------------
-# FONCTION D'OPTIMISATION MATHÉMATIQUE
+# FONCTION D'OPTIMISATION MATHÉMATIQUE (AVEC ANTI-EXPLOSION)
 # -----------------------------------------------------------------------------
 def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
     resultats_finaux = {}
     
-    # Nettoyage et suppression des espaces pour éviter les bugs de noms qui ne correspondent pas
     df_profils = df_profils.dropna(subset=['Nom', 'Longueur Barre (mm)', 'Quantité en stock']).copy()
     df_profils['Nom'] = df_profils['Nom'].astype(str).str.strip()
     df_profils = df_profils[df_profils['Nom'] != ""]
@@ -189,14 +185,20 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
                     'angle_d': row.get('Angle Droite (°)', 90.0)
                 })
 
-        barres_liste = [{'id': nom_profil, 'longueur': profil['Longueur Barre (mm)']} for _ in range(int(profil['Quantité en stock']))]
-
-        if not barres_liste:
+        qte_stock_totale = int(profil['Quantité en stock'])
+        
+        if qte_stock_totale <= 0:
             resultats_finaux[nom_profil] = "PAS_DE_STOCK"
             continue
 
         if not pieces_liste:
             continue
+            
+        # --- BLINDAGE ANTI-EXPLOSION (1000 BARRES) ---
+        # L'IA n'a pas besoin de regarder 1000 barres pour ranger 10 pièces. 
+        # On limite le nombre de barres virtuelles au pire des cas : 1 pièce par barre.
+        qte_barres_a_fournir_ia = min(qte_stock_totale, len(pieces_liste))
+        barres_liste = [{'id': nom_profil, 'longueur': profil['Longueur Barre (mm)']} for _ in range(qte_barres_a_fournir_ia)]
 
         max_barre = max([b['longueur'] for b in barres_liste]) if barres_liste else 0
         if any(p['longueur'] > max_barre for p in pieces_liste):
@@ -214,6 +216,10 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
 
         for i in range(len(pieces_liste)):
             model.AddExactlyOne(x[i, j] for j in range(len(barres_liste)))
+
+        # Casser la symétrie de l'IA (accélère le calcul par 100) : obliger l'IA à remplir la barre 1 avant d'ouvrir la barre 2
+        for j in range(1, len(barres_liste)):
+            model.Add(y[j] <= y[j-1])
 
         lame = int(epaisseur_lame * 10)
         for j in range(len(barres_liste)):
@@ -245,10 +251,11 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
     return resultats_finaux
 
 # -----------------------------------------------------------------------------
-# FONCTION DE DESSIN 
+# FONCTION DE DESSIN (COMPACTE)
 # -----------------------------------------------------------------------------
 def dessiner_barre(barre_info, epaisseur_lame, largeur_profil, seuil_chute):
-    fig, ax = plt.subplots(figsize=(12, 2))
+    # Rendu plus compact : 0.6 pouce de hauteur (au lieu de 2)
+    fig, ax = plt.subplots(figsize=(12, 0.6)) 
     longueur_totale = barre_info['barre_longueur']
     
     ax.add_patch(patches.Rectangle((0, 0), longueur_totale, largeur_profil, facecolor='#f0f0f0', edgecolor='black'))
@@ -268,7 +275,8 @@ def dessiner_barre(barre_info, epaisseur_lame, largeur_profil, seuil_chute):
         x_br, x_tr = x_max - min((dx_d if dx_d > 0 else 0), L), x_max - min((-dx_d if dx_d < 0 else 0), L)
         
         ax.add_patch(patches.Polygon([(x_bl, 0), (x_tl, largeur_profil), (x_tr, largeur_profil), (x_br, 0)], closed=True, facecolor='#4CAF50', edgecolor='black', linewidth=1))
-        ax.text(position_actuelle + L/2, largeur_profil/2, f"{p['ref']}\n{L}mm", ha='center', va='center', color='white', fontweight='bold', fontsize=9)
+        # Texte légèrement plus petit pour rentrer dans la nouvelle taille
+        ax.text(position_actuelle + L/2, largeur_profil/2, f"{p['ref']}\n{L}mm", ha='center', va='center', color='white', fontweight='bold', fontsize=8)
         position_actuelle += L
         
         if position_actuelle + epaisseur_lame <= longueur_totale and position_actuelle < longueur_totale:
@@ -279,11 +287,15 @@ def dessiner_barre(barre_info, epaisseur_lame, largeur_profil, seuil_chute):
         chute = longueur_totale - position_actuelle
         est_reutilisable = chute >= seuil_chute
         ax.add_patch(patches.Rectangle((position_actuelle, 0), chute, largeur_profil, facecolor='#C8E6C9' if est_reutilisable else '#9E9E9E', edgecolor='black', hatch='' if est_reutilisable else '//'))
-        ax.text(position_actuelle + chute/2, largeur_profil/2, f"♻️ Chute à garder\n{chute:.1f} mm" if est_reutilisable else f"Déchet\n{chute:.1f} mm", ha='center', va='center', color='black', fontweight='bold' if est_reutilisable else 'normal', fontsize=9)
+        ax.text(position_actuelle + chute/2, largeur_profil/2, f"♻️ Chute\n{chute:.1f} mm" if est_reutilisable else f"Déchet\n{chute:.1f} mm", ha='center', va='center', color='black', fontweight='bold' if est_reutilisable else 'normal', fontsize=8)
         
     ax.set_xlim(0, longueur_totale)
     ax.set_ylim(0, largeur_profil * 1.2)
     ax.axis('off')
+    
+    # Supprimer les marges blanches parasites autour du schéma
+    fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    
     return fig
 
 # -----------------------------------------------------------------------------
@@ -319,12 +331,10 @@ with st.sidebar:
             try:
                 nom_p = st.session_state.projet_actif
                 
-                # 1. Sauvegarder le nom du projet
                 url_proj = f"{SUPABASE_URL}/rest/v1/gp_debit_projets"
                 r_proj = requests.post(url_proj, headers={**HEADERS, "Prefer": "resolution=merge-duplicates"}, params={"on_conflict":"nom_projet"}, json=[{"nom_projet": nom_p}])
                 if r_proj.status_code not in [200, 201]: raise Exception(f"Erreur table projets : {r_proj.text}")
                 
-                # 2. Envoyer les profils
                 df_prof = st.session_state.workspace[nom_p].get("profils_edited", st.session_state.workspace[nom_p]["profils"])
                 requete_delete("gp_debit_profils", "nom_projet", nom_p)
                 
@@ -345,7 +355,6 @@ with st.sidebar:
                         })
                 requete_insert("gp_debit_profils", insert_profils)
 
-                # 3. Envoyer les listes
                 requete_delete("gp_debit_pieces", "nom_projet", nom_p)
                 insert_pieces = []
                 for l_name, l_base in st.session_state.workspace[nom_p]["listes"].items():
@@ -366,7 +375,6 @@ with st.sidebar:
                             st.warning(f"⚠️ Une pièce de la liste '{l_name}' a été ignorée car la 'Référence' est vide.")
                             
                 requete_insert("gp_debit_pieces", insert_pieces)
-                
                 st.success("Projet sauvegardé avec succès !")
             except Exception as e:
                 st.error(f"❌ Erreur Base de données : {e}")
@@ -479,52 +487,67 @@ with tab3:
         )
 
 with tab4:
+    st.subheader(f"Plans de coupe du projet : {st.session_state.projet_actif}")
+    
+    # -----------------------------------------------------------
+    # NOUVEAU : Sélection des listes à optimiser !
+    # -----------------------------------------------------------
+    noms_toutes_listes = list(projet_courant["listes"].keys())
+    listes_a_optimiser = st.multiselect(
+        "Sélectionnez la ou les liste(s) à produire :", 
+        options=noms_toutes_listes, 
+        default=noms_toutes_listes,
+        help="Vous pouvez décocher les listes que vous ne voulez pas optimiser pour l'instant."
+    )
+    
     if st.button("🚀 Lancer l'optimisation", type="primary"):
-        with st.spinner('Calcul par l\'IA...'):
-            frames_pieces = []
-            for nom_liste in projet_courant["listes"].keys():
-                df_l = projet_courant.get("listes_edited", {}).get(nom_liste, projet_courant["listes"][nom_liste])
-                if not df_l.empty:
-                    df_temp = df_l.copy()
-                    df_temp['Nom de la Liste'] = nom_liste 
-                    frames_pieces.append(df_temp)
-            
-            df_pieces_global = pd.concat(frames_pieces, ignore_index=True) if frames_pieces else pd.DataFrame()
-            
-            if df_pieces_global.empty: 
-                st.info("Aucune pièce à optimiser.")
-            else:
-                profils_a_utiliser = projet_courant.get("profils_edited", projet_courant["profils"])
-                resultats = optimiser_projet_complet(df_pieces_global, profils_a_utiliser, epaisseur_lame)
+        if not listes_a_optimiser:
+            st.warning("Veuillez sélectionner au moins une liste à optimiser.")
+        else:
+            with st.spinner('Calcul par l\'IA...'):
+                frames_pieces = []
+                for nom_liste in listes_a_optimiser: # On boucle SEULEMENT sur les listes sélectionnées
+                    df_l = projet_courant.get("listes_edited", {}).get(nom_liste, projet_courant["listes"][nom_liste])
+                    if not df_l.empty:
+                        df_temp = df_l.copy()
+                        df_temp['Nom de la Liste'] = nom_liste 
+                        frames_pieces.append(df_temp)
                 
-                # NOUVEAU DIAGNOSTIC SI RIEN NE SE PASSE :
-                if not resultats:
-                    st.warning("⚠️ L'optimisation n'a rien pu calculer. Voici ce qu'il manque :")
-                    st.info("1. Avez-vous renseigné du **Stock** (Quantité > 0 et Longueur > 0) dans l'onglet 2 ?\n"
-                            "2. Les noms des profils dans l'Excel sont-ils **exactement les mêmes** que ceux de l'onglet 2 ?")
+                df_pieces_global = pd.concat(frames_pieces, ignore_index=True) if frames_pieces else pd.DataFrame()
+                
+                if df_pieces_global.empty: 
+                    st.info("Aucune pièce à optimiser dans ces listes.")
                 else:
-                    total_longueur_pieces = sum(p['longueur'] for res in resultats.values() if type(res) == dict and res["statut"] == "SUCCES" for b in res["barres"] for p in b['pieces'])
-                    total_longueur_barres = sum(b['barre_longueur'] for res in resultats.values() if type(res) == dict and res["statut"] == "SUCCES" for b in res["barres"])
+                    profils_a_utiliser = projet_courant.get("profils_edited", projet_courant["profils"])
+                    resultats = optimiser_projet_complet(df_pieces_global, profils_a_utiliser, epaisseur_lame)
                     
-                    if total_longueur_barres > 0:
-                        rendement = (total_longueur_pieces / total_longueur_barres) * 100
-                        col1, col2, col3 = st.columns(3)
-                        col1.metric("Matière Consommée", f"{total_longueur_barres / 1000:.2f} mètres")
-                        col2.metric("Matière Utile (Pièces)", f"{total_longueur_pieces / 1000:.2f} mètres")
-                        col3.metric("Rendement", f"{rendement:.1f} %", f"-{100-rendement:.1f} % de chute", delta_color="inverse")
-                        st.divider()
+                    if not resultats:
+                        st.warning("⚠️ L'optimisation n'a rien pu calculer. Voici ce qu'il manque :")
+                        st.info("1. Avez-vous renseigné du **Stock** (Quantité > 0 et Longueur > 0) dans l'onglet 2 ?\n"
+                                "2. Les noms des profils dans vos listes sont-ils **exactement les mêmes** que ceux de l'onglet 2 ?")
+                    else:
+                        total_longueur_pieces = sum(p['longueur'] for res in resultats.values() if type(res) == dict and res["statut"] == "SUCCES" for b in res["barres"] for p in b['pieces'])
+                        total_longueur_barres = sum(b['barre_longueur'] for res in resultats.values() if type(res) == dict and res["statut"] == "SUCCES" for b in res["barres"])
+                        
+                        if total_longueur_barres > 0:
+                            rendement = (total_longueur_pieces / total_longueur_barres) * 100
+                            col1, col2, col3 = st.columns(3)
+                            col1.metric("Matière Consommée", f"{total_longueur_barres / 1000:.2f} mètres")
+                            col2.metric("Matière Utile (Pièces)", f"{total_longueur_pieces / 1000:.2f} mètres")
+                            col3.metric("Rendement", f"{rendement:.1f} %", f"-{100-rendement:.1f} % de chute", delta_color="inverse")
+                            st.divider()
 
-                    for nom_profil, resultat in resultats.items():
-                        st.markdown(f"### 🔹 Profil : {nom_profil}")
-                        if resultat == "PAS_DE_STOCK": 
-                            st.error("❌ Pas de barres en stock pour ce profil. Allez dans l'onglet 2 pour ajouter du stock.")
-                        elif resultat == "ERREUR_TAILLE": 
-                            st.error("❌ Impossible : Vous avez demandé une pièce qui est plus longue que la barre en stock !")
-                        elif resultat == "ECHEC": 
-                            st.error("❌ Échec : Il n'y a pas assez de quantité en stock pour couper toutes ces pièces.")
-                        elif type(resultat) == dict and resultat["statut"] == "SUCCES":
-                            st.success(f"✅ {len(resultat['barres'])} barre(s) utilisée(s).")
-                            for idx, barre in enumerate(resultat["barres"]):
-                                with st.expander(f"Barre {idx+1} (Longueur: {barre['barre_longueur']} mm) - Chute : {barre['chute']:.1f} mm", expanded=True):
-                                    st.pyplot(dessiner_barre(barre, epaisseur_lame, resultat["largeur"], seuil_chute))
-                        st.divider()
+                        for nom_profil, resultat in resultats.items():
+                            st.markdown(f"### 🔹 Profil : {nom_profil}")
+                            if resultat == "PAS_DE_STOCK": 
+                                st.error("❌ Pas de barres en stock pour ce profil. Allez dans l'onglet 2 pour ajouter du stock.")
+                            elif resultat == "ERREUR_TAILLE": 
+                                st.error("❌ Impossible : Vous avez demandé une pièce qui est plus longue que la barre en stock !")
+                            elif resultat == "ECHEC": 
+                                st.error("❌ Échec : Il n'y a pas assez de quantité en stock pour couper toutes ces pièces.")
+                            elif type(resultat) == dict and resultat["statut"] == "SUCCES":
+                                st.success(f"✅ {len(resultat['barres'])} barre(s) utilisée(s).")
+                                for idx, barre in enumerate(resultat["barres"]):
+                                    with st.expander(f"Barre {idx+1} (Longueur: {barre['barre_longueur']} mm) - Chute : {barre['chute']:.1f} mm", expanded=True):
+                                        st.pyplot(dessiner_barre(barre, epaisseur_lame, resultat["largeur"], seuil_chute))
+                            st.divider()
