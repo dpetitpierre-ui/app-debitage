@@ -20,10 +20,10 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# Colonnes de l'interface
-COL_PROFILS = ["Nom du Profil", "Longueur Barre (mm)", "Largeur (mm)", "Couleur / Finition", "Quantité en stock"]
+# Nouvelles colonnes de l'interface demandées
+COL_STANDARDS = ["Matériau", "Nom", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)"]
+COL_PROFILS = ["Nom", "Longueur Barre (mm)", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)", "Couleur", "Longueur Peinture (mm)", "Quantité en stock"]
 COL_LISTES = ["Référence", "Profil", "Longueur max (mm)", "Quantité", "Angle Gauche (°)", "Angle Droit (°)", "Symétrique"]
-COL_STANDARDS = ["Nom du Profil", "Largeur (mm)", "Couleur / Finition"]
 
 # -----------------------------------------------------------------------------
 # OUTILS DE BASE DE DONNÉES (TRADUCTION INTERFACE <-> SQL)
@@ -48,13 +48,28 @@ def requete_insert(table, data):
     if r.status_code not in [200, 201]:
         raise Exception(f"Erreur insertion ({table}) : {r.text}")
 
+def formater_df_standards(df):
+    if df is None or df.empty: return pd.DataFrame(columns=COL_STANDARDS)
+    df = df.copy()
+    df["Matériau"] = df["Matériau"].fillna("").astype(str)
+    df["Nom"] = df["Nom"].fillna("").astype(str)
+    df["Section A (mm)"] = pd.to_numeric(df["Section A (mm)"], errors='coerce')
+    df["Section B (mm)"] = pd.to_numeric(df["Section B (mm)"], errors='coerce')
+    df["Épaisseur (mm)"] = pd.to_numeric(df["Épaisseur (mm)"], errors='coerce')
+    df["Poids (kg/m)"] = pd.to_numeric(df["Poids (kg/m)"], errors='coerce')
+    return df
+
 def formater_df_profils(df):
     if df is None or df.empty: return pd.DataFrame(columns=COL_PROFILS)
     df = df.copy()
-    df["Nom du Profil"] = df["Nom du Profil"].fillna("").astype(str)
+    df["Nom"] = df["Nom"].fillna("").astype(str)
     df["Longueur Barre (mm)"] = pd.to_numeric(df["Longueur Barre (mm)"], errors='coerce')
-    df["Largeur (mm)"] = pd.to_numeric(df["Largeur (mm)"], errors='coerce')
-    df["Couleur / Finition"] = df["Couleur / Finition"].fillna("").astype(str)
+    df["Section A (mm)"] = pd.to_numeric(df["Section A (mm)"], errors='coerce')
+    df["Section B (mm)"] = pd.to_numeric(df["Section B (mm)"], errors='coerce')
+    df["Épaisseur (mm)"] = pd.to_numeric(df["Épaisseur (mm)"], errors='coerce')
+    df["Poids (kg/m)"] = pd.to_numeric(df["Poids (kg/m)"], errors='coerce')
+    df["Couleur"] = df["Couleur"].fillna("").astype(str)
+    df["Longueur Peinture (mm)"] = pd.to_numeric(df["Longueur Peinture (mm)"], errors='coerce')
     df["Quantité en stock"] = pd.to_numeric(df["Quantité en stock"], errors='coerce').astype('Int64')
     return df
 
@@ -75,7 +90,6 @@ def formater_df_listes(df):
 # -----------------------------------------------------------------------------
 if 'workspace' not in st.session_state:
     try:
-        # On télécharge les 4 tables
         db_standards = requete_get("gp_debit_standards")
         db_projets = requete_get("gp_debit_projets")
         db_profils = requete_get("gp_debit_profils")
@@ -83,8 +97,8 @@ if 'workspace' not in st.session_state:
         
         # 1. Traitement des standards
         if db_standards:
-            std_data = [{"Nom du Profil": r["nom_profil"], "Largeur (mm)": r["largeur"], "Couleur / Finition": r["couleur"]} for r in db_standards]
-            st.session_state.df_standards_base = pd.DataFrame(std_data)
+            std_data = [{"Matériau": r.get("materiau", ""), "Nom": r["nom_profil"], "Section A (mm)": r.get("section_a"), "Section B (mm)": r.get("section_b"), "Épaisseur (mm)": r.get("epaisseur"), "Poids (kg/m)": r.get("poids_ml")} for r in db_standards]
+            st.session_state.df_standards_base = formater_df_standards(pd.DataFrame(std_data))
         else:
             st.session_state.df_standards_base = pd.DataFrame(columns=COL_STANDARDS)
             
@@ -94,16 +108,13 @@ if 'workspace' not in st.session_state:
             for proj in db_projets:
                 nom_p = proj["nom_projet"]
                 
-                # Récupérer les profils de ce projet
-                prof_data = [{"Nom du Profil": p["nom_profil"], "Longueur Barre (mm)": p["longueur"], "Largeur (mm)": p["largeur"], "Couleur / Finition": p["couleur"], "Quantité en stock": p["quantite"]} for p in db_profils if p["nom_projet"] == nom_p]
+                prof_data = [{"Nom": p["nom_profil"], "Longueur Barre (mm)": p.get("longueur"), "Section A (mm)": p.get("section_a"), "Section B (mm)": p.get("section_b"), "Épaisseur (mm)": p.get("epaisseur"), "Poids (kg/m)": p.get("poids_ml"), "Couleur": p.get("couleur", ""), "Longueur Peinture (mm)": p.get("longueur_peinture"), "Quantité en stock": p.get("quantite")} for p in db_profils if p["nom_projet"] == nom_p]
                 
-                # Récupérer les pièces de ce projet et les diviser par listes
                 pieces_p = [p for p in db_pieces if p["nom_projet"] == nom_p]
                 listes_dict = {}
                 
                 if pieces_p:
                     df_pieces_temp = pd.DataFrame([{"Nom de Liste": pc["nom_liste"], "Référence": pc["reference"], "Profil": pc["profil"], "Longueur max (mm)": pc["longueur"], "Quantité": pc["quantite"], "Angle Gauche (°)": pc["angle_g"], "Angle Droit (°)": pc["angle_d"], "Symétrique": pc["symetrique"]} for pc in pieces_p])
-                    
                     for nom_l in df_pieces_temp["Nom de Liste"].unique():
                         listes_dict[nom_l] = formater_df_listes(df_pieces_temp[df_pieces_temp["Nom de Liste"] == nom_l])
                 else:
@@ -123,7 +134,7 @@ if 'workspace' not in st.session_state:
             
     except Exception as e:
         # Création d'un projet par défaut si la base est vide
-        st.session_state.df_standards_base = pd.DataFrame([{"Nom du Profil": "Tube 50x50", "Largeur (mm)": 50.0, "Couleur / Finition": "Noir"}])
+        st.session_state.df_standards_base = formater_df_standards(pd.DataFrame([{"Matériau": "ACIER", "Nom": "Tube 50x50", "Section A (mm)": 50.0, "Section B (mm)": 50.0, "Épaisseur (mm)": 2.0}]))
         st.session_state.workspace = {
             "Nouveau Projet": {
                 "profils": formater_df_profils(pd.DataFrame()),
@@ -138,14 +149,15 @@ if 'workspace' not in st.session_state:
 # -----------------------------------------------------------------------------
 def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
     resultats_finaux = {}
-    df_profils = df_profils.dropna(subset=['Nom du Profil', 'Longueur Barre (mm)', 'Quantité en stock']).copy()
-    df_profils = df_profils[df_profils['Nom du Profil'] != ""]
+    df_profils = df_profils.dropna(subset=['Nom', 'Longueur Barre (mm)', 'Quantité en stock']).copy()
+    df_profils = df_profils[df_profils['Nom'] != ""]
     df_pieces = df_pieces.dropna(subset=['Référence', 'Profil', 'Longueur max (mm)', 'Quantité']).copy()
     df_pieces = df_pieces[df_pieces['Profil'] != ""]
 
     for index, profil in df_profils.iterrows():
-        nom_profil = profil['Nom du Profil']
-        largeur_profil = profil.get('Largeur (mm)', 50.0) 
+        nom_profil = profil['Nom']
+        # On utilise la Section A comme largeur pour les schémas
+        largeur_profil = profil.get('Section A (mm)', 50.0) 
         if pd.isna(largeur_profil): largeur_profil = 50.0
         
         pieces_du_profil = df_pieces[df_pieces['Profil'] == nom_profil]
@@ -287,37 +299,33 @@ with st.sidebar:
             try:
                 nom_p = st.session_state.projet_actif
                 
-                # 1. Sauvegarder le nom du projet (Méthode POST avec Upsert via headers)
+                # 1. Sauvegarder le nom du projet
                 url_proj = f"{SUPABASE_URL}/rest/v1/gp_debit_projets"
-                r_proj = requests.post(
-                    url_proj, 
-                    headers={**HEADERS, "Prefer": "resolution=merge-duplicates"}, 
-                    params={"on_conflict":"nom_projet"}, 
-                    json=[{"nom_projet": nom_p}]
-                )
+                r_proj = requests.post(url_proj, headers={**HEADERS, "Prefer": "resolution=merge-duplicates"}, params={"on_conflict":"nom_projet"}, json=[{"nom_projet": nom_p}])
                 if r_proj.status_code not in [200, 201]: raise Exception(f"Erreur table projets : {r_proj.text}")
                 
-                # 2. Nettoyer et envoyer les profils de ce projet
+                # 2. Envoyer les profils
                 df_prof = st.session_state.workspace[nom_p].get("profils_edited", st.session_state.workspace[nom_p]["profils"])
                 requete_delete("gp_debit_profils", "nom_projet", nom_p)
                 
                 insert_profils = []
                 for _, r in df_prof.iterrows():
-                    nom_profil = str(r["Nom du Profil"]).strip()
+                    nom_profil = str(r["Nom"]).strip()
                     if nom_profil != "" and nom_profil != "nan" and nom_profil != "None":
                         insert_profils.append({
                             "nom_projet": nom_p, "nom_profil": nom_profil, 
                             "longueur": float(r["Longueur Barre (mm)"]) if pd.notna(r["Longueur Barre (mm)"]) else 0,
-                            "largeur": float(r["Largeur (mm)"]) if pd.notna(r["Largeur (mm)"]) else 0, 
-                            "couleur": str(r["Couleur / Finition"]), 
+                            "section_a": float(r["Section A (mm)"]) if pd.notna(r["Section A (mm)"]) else None,
+                            "section_b": float(r["Section B (mm)"]) if pd.notna(r["Section B (mm)"]) else None,
+                            "epaisseur": float(r["Épaisseur (mm)"]) if pd.notna(r["Épaisseur (mm)"]) else None,
+                            "poids_ml": float(r["Poids (kg/m)"]) if pd.notna(r["Poids (kg/m)"]) else None,
+                            "couleur": str(r["Couleur"]) if pd.notna(r["Couleur"]) else "",
+                            "longueur_peinture": float(r["Longueur Peinture (mm)"]) if pd.notna(r["Longueur Peinture (mm)"]) else None,
                             "quantite": int(r["Quantité en stock"]) if pd.notna(r["Quantité en stock"]) else 0
                         })
-                    elif pd.notna(r["Longueur Barre (mm)"]) or pd.notna(r["Quantité en stock"]):
-                        st.warning("⚠️ Une ligne de stock a été ignorée car le 'Nom du Profil' est vide.")
-                        
                 requete_insert("gp_debit_profils", insert_profils)
 
-                # 3. Nettoyer et envoyer les listes de ce projet
+                # 3. Envoyer les listes
                 requete_delete("gp_debit_pieces", "nom_projet", nom_p)
                 insert_pieces = []
                 for l_name, l_base in st.session_state.workspace[nom_p]["listes"].items():
@@ -334,12 +342,9 @@ with st.sidebar:
                                 "angle_d": float(r["Angle Droit (°)"]) if pd.notna(r["Angle Droit (°)"]) else 90,
                                 "symetrique": bool(r["Symétrique"])
                             })
-                        elif pd.notna(r["Longueur max (mm)"]) or pd.notna(r["Quantité"]):
-                            st.warning(f"⚠️ Une pièce de la liste '{l_name}' a été ignorée car la 'Référence' est vide.")
-                            
                 requete_insert("gp_debit_pieces", insert_pieces)
                 
-                st.success("Projet sauvegardé dans la base avec succès !")
+                st.success("Projet sauvegardé avec succès !")
             except Exception as e:
                 st.error(f"❌ Erreur Base de données : {e}")
 
@@ -358,13 +363,31 @@ tab1, tab2, tab3, tab4 = st.tabs(["📚 1. Base Standard", f"📦 2. Stock ({st.
 
 with tab1:
     st.subheader("Catalogue des Profils Standards (Commun)")
-    st.session_state.df_standards_edited = st.data_editor(st.session_state.df_standards_base, num_rows="dynamic", use_container_width=True, key="editor_std", hide_index=True, column_config={"Nom du Profil": st.column_config.TextColumn(required=True)})
+    st.session_state.df_standards_edited = st.data_editor(
+        st.session_state.df_standards_base, num_rows="dynamic", use_container_width=True, key="editor_std", hide_index=True, 
+        column_config={
+            "Matériau": st.column_config.SelectboxColumn("Matériau", options=["ALUMINIUM", "ACIER", "INOX"], required=True),
+            "Nom": st.column_config.TextColumn("Nom", required=True),
+            "Section A (mm)": st.column_config.NumberColumn("Section A (mm)", required=True),
+            "Section B (mm)": st.column_config.NumberColumn("Section B (mm)", required=True)
+        }
+    )
     if st.button("Sauvegarder Standards"):
         try:
             r_del = requests.delete(f"{SUPABASE_URL}/rest/v1/gp_debit_standards?nom_profil=not.is.null", headers=HEADERS)
             if r_del.status_code not in [200, 204]: raise Exception(f"Delete fail: {r_del.text}")
             
-            insert_std = [{"nom_profil": str(r["Nom du Profil"]), "largeur": float(r["Largeur (mm)"]) if pd.notna(r["Largeur (mm)"]) else 0, "couleur": str(r["Couleur / Finition"])} for _, r in st.session_state.df_standards_edited.iterrows() if pd.notna(r["Nom du Profil"]) and str(r["Nom du Profil"]).strip() != ""]
+            insert_std = []
+            for _, r in st.session_state.df_standards_edited.iterrows():
+                if pd.notna(r["Nom"]) and str(r["Nom"]).strip() != "":
+                    insert_std.append({
+                        "nom_profil": str(r["Nom"]),
+                        "materiau": str(r["Matériau"]) if pd.notna(r["Matériau"]) else "ACIER",
+                        "section_a": float(r["Section A (mm)"]) if pd.notna(r["Section A (mm)"]) else 0,
+                        "section_b": float(r["Section B (mm)"]) if pd.notna(r["Section B (mm)"]) else 0,
+                        "epaisseur": float(r["Épaisseur (mm)"]) if pd.notna(r["Épaisseur (mm)"]) else None,
+                        "poids_ml": float(r["Poids (kg/m)"]) if pd.notna(r["Poids (kg/m)"]) else None
+                    })
             requete_insert("gp_debit_standards", insert_std)
             st.toast("Standards sauvegardés", icon="✅")
         except Exception as e:
@@ -372,7 +395,10 @@ with tab1:
 
 with tab2:
     st.subheader(f"Profils et Stock dédiés au projet : {st.session_state.projet_actif}")
-    projet_courant["profils_edited"] = st.data_editor(projet_courant["profils"], num_rows="dynamic", use_container_width=True, key=f"editor_stock_{st.session_state.projet_actif}", hide_index=True, column_config={"Nom du Profil": st.column_config.TextColumn(required=True)})
+    projet_courant["profils_edited"] = st.data_editor(
+        projet_courant["profils"], num_rows="dynamic", use_container_width=True, key=f"editor_stock_{st.session_state.projet_actif}", hide_index=True, 
+        column_config={"Nom": st.column_config.TextColumn(required=True)}
+    )
 
 with tab3:
     col_gauche, col_droite = st.columns([1, 1])
@@ -398,7 +424,7 @@ with tab3:
         st.markdown(f"### ✏️ Liste : **{st.session_state.liste_active}**")
         
         profils_actuels = projet_courant.get("profils_edited", projet_courant["profils"])
-        noms_profils_disponibles = profils_actuels['Nom du Profil'].dropna().replace("", pd.NA).dropna().unique().tolist() if "Nom du Profil" in profils_actuels.columns and not profils_actuels.empty else ["Aucun profil défini"]
+        noms_profils_disponibles = profils_actuels['Nom'].dropna().replace("", pd.NA).dropna().unique().tolist() if "Nom" in profils_actuels.columns and not profils_actuels.empty else ["Aucun profil défini"]
 
         df_liste_active = projet_courant["listes"][st.session_state.liste_active]
         if "listes_edited" not in projet_courant: projet_courant["listes_edited"] = {}
