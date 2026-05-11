@@ -157,7 +157,6 @@ if 'workspace' not in st.session_state:
 def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
     resultats_finaux = {}
     
-    # Plus besoin de Quantité en stock. On a juste besoin de la Longueur de la barre de référence.
     df_profils = df_profils.dropna(subset=['Nom', 'Longueur Barre (mm)']).copy()
     df_profils['Nom'] = df_profils['Nom'].astype(str).str.strip()
     df_profils = df_profils[df_profils['Nom'] != ""]
@@ -170,8 +169,10 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
         nom_profil = profil['Nom']
         largeur_profil = profil.get('Section A (mm)', 50.0) 
         longueur_barre_standard = profil.get('Longueur Barre (mm)', 0)
+        longueur_peinture = profil.get('Longueur Peinture (mm)', 0)
         
         if pd.isna(largeur_profil): largeur_profil = 50.0
+        if pd.isna(longueur_peinture): longueur_peinture = 0.0
         
         pieces_du_profil = df_pieces[df_pieces['Profil'] == nom_profil]
         if pieces_du_profil.empty: continue 
@@ -242,7 +243,14 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
                             longueur_utilisee += pieces_liste[i]['longueur'] + epaisseur_lame
                     longueur_utilisee -= epaisseur_lame 
                     resultats_barres.append({'barre_longueur': barres_liste[j]['longueur'], 'pieces': pieces_barre, 'chute': barres_liste[j]['longueur'] - longueur_utilisee})
-            resultats_finaux[nom_profil] = {"statut": "SUCCES", "barres": resultats_barres, "largeur": largeur_profil}
+            
+            resultats_finaux[nom_profil] = {
+                "statut": "SUCCES", 
+                "barres": resultats_barres, 
+                "largeur": largeur_profil,
+                "longueur_peinture": longueur_peinture,
+                "longueur_barre_standard": longueur_barre_standard
+            }
         else:
             resultats_finaux[nom_profil] = "ECHEC"
 
@@ -346,7 +354,7 @@ with st.sidebar:
                             "poids_ml": float(r["Poids (kg/m)"]) if pd.notna(r["Poids (kg/m)"]) else None,
                             "couleur": str(r["Couleur"]) if pd.notna(r["Couleur"]) else "",
                             "longueur_peinture": float(r["Longueur Peinture (mm)"]) if pd.notna(r["Longueur Peinture (mm)"]) else None,
-                            "quantite": 0 # Valeur factice pour satisfaire Supabase sans changer sa structure
+                            "quantite": 0 
                         })
                 requete_insert("gp_debit_profils", insert_profils)
 
@@ -518,15 +526,31 @@ with tab4:
                         st.info("1. Avez-vous bien renseigné la **Longueur de Barre** dans l'onglet 2 ?\n"
                                 "2. Les noms des profils dans vos listes sont-ils **exactement les mêmes** que ceux de l'onglet 2 ?")
                     else:
-                        total_longueur_pieces = sum(p['longueur'] for res in resultats.values() if type(res) == dict and res["statut"] == "SUCCES" for b in res["barres"] for p in b['pieces'])
-                        total_longueur_barres = sum(b['barre_longueur'] for res in resultats.values() if type(res) == dict and res["statut"] == "SUCCES" for b in res["barres"])
+                        total_longueur_pieces = 0
+                        total_longueur_barres = 0
+                        total_surface_peinture = 0.0 # Ajout du total global de peinture
+                        
+                        for profil_res in resultats.values():
+                            if type(profil_res) == dict and profil_res["statut"] == "SUCCES":
+                                nb_barres = len(profil_res["barres"])
+                                perimetre = profil_res.get("longueur_peinture", 0)
+                                longueur_barre = profil_res.get("longueur_barre_standard", 0)
+                                
+                                # Calcul de la surface en m2 : (Périmètre * Longueur Barre * Nombre) / 1000000
+                                total_surface_peinture += (perimetre * longueur_barre * nb_barres) / 1000000.0
+                                
+                                for b in profil_res["barres"]:
+                                    total_longueur_barres += b['barre_longueur']
+                                    for p in b['pieces']:
+                                        total_longueur_pieces += p['longueur']
                         
                         if total_longueur_barres > 0:
                             rendement = (total_longueur_pieces / total_longueur_barres) * 100
-                            col1, col2, col3 = st.columns(3)
+                            col1, col2, col3, col4 = st.columns(4)
                             col1.metric("Matière Consommée", f"{total_longueur_barres / 1000:.2f} mètres")
                             col2.metric("Matière Utile (Pièces)", f"{total_longueur_pieces / 1000:.2f} mètres")
                             col3.metric("Rendement", f"{rendement:.1f} %", f"-{100-rendement:.1f} % de chute", delta_color="inverse")
+                            col4.metric("Surface à Peindre", f"{total_surface_peinture:.2f} m²")
                             st.divider()
 
                         for nom_profil, resultat in resultats.items():
@@ -538,7 +562,10 @@ with tab4:
                             elif resultat == "ECHEC": 
                                 st.error("❌ Échec inattendu de l'optimiseur.")
                             elif type(resultat) == dict and resultat["statut"] == "SUCCES":
-                                st.success(f"📦 À commander : {len(resultat['barres'])} barre(s) de {resultat['barres'][0]['barre_longueur']} mm.")
+                                # Calcul de la surface pour ce profil précis
+                                surface_profil = (resultat.get('longueur_peinture', 0) * resultat.get('longueur_barre_standard', 0) * len(resultat['barres'])) / 1000000.0
+                                st.success(f"📦 À commander : {len(resultat['barres'])} barre(s) de {resultat['barres'][0]['barre_longueur']} mm.  *(Surface de peinture : {surface_profil:.2f} m²)*")
+                                
                                 for idx, barre in enumerate(resultat["barres"]):
                                     with st.expander(f"Barre {idx+1} (Longueur: {barre['barre_longueur']} mm) - Chute : {barre['chute']:.1f} mm", expanded=True):
                                         st.pyplot(dessiner_barre(barre, epaisseur_lame, resultat["largeur"], seuil_chute))
