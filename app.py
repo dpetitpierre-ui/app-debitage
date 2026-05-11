@@ -23,29 +23,46 @@ HEADERS_SUPABASE = {
     "Content-Type": "application/json"
 }
 
-# Colonnes par défaut pour éviter le KeyError sur les projets vides
+# Colonnes par défaut pour éviter les bugs sur les projets vides
 COL_PROFILS = ["Nom du Profil", "Longueur Barre (mm)", "Largeur (mm)", "Couleur / Finition", "Quantité en stock"]
 COL_LISTES = ["Référence", "Profil", "Longueur max (mm)", "Quantité", "Angle Gauche (°)", "Angle Droit (°)", "Symétrique"]
 
 # -----------------------------------------------------------------------------
-# FONCTIONS DE SAUVEGARDE ET CHARGEMENT CLOUD
+# FONCTIONS DE SAUVEGARDE ET CHARGEMENT CLOUD (AVEC CORRECTION DOUBLE SAISIE)
 # -----------------------------------------------------------------------------
 def exporter_workspace_json():
-    data = {"standards": st.session_state.df_standards_base.to_dict(orient='records'), "projets": {}}
+    # On récupère le catalogue standard édité (ou la base si pas d'édition)
+    df_std = st.session_state.get('df_standards_edited', st.session_state.df_standards_base)
+    data = {"standards": df_std.to_dict(orient='records'), "projets": {}}
+    
     for p_name, p_data in st.session_state.workspace.items():
+        # On priorise toujours les données "éditées" pour la sauvegarde
+        df_prof = p_data.get("profils_edited", p_data["profils"])
+        
+        listes_export = {}
+        for l_name, l_base in p_data["listes"].items():
+            if "listes_edited" in p_data and l_name in p_data["listes_edited"]:
+                listes_export[l_name] = p_data["listes_edited"][l_name].to_dict(orient='records')
+            else:
+                listes_export[l_name] = l_base.to_dict(orient='records')
+                
         data["projets"][p_name] = {
-            "profils": p_data["profils"].to_dict(orient='records'),
-            "listes": {l_name: l_df.to_dict(orient='records') for l_name, l_df in p_data["listes"].items()}
+            "profils": df_prof.to_dict(orient='records'),
+            "listes": listes_export
         }
     return data 
 
 def charger_donnees_dans_memoire(data):
+    # Nettoyage de la mémoire d'édition pour éviter les conflits
+    if 'df_standards_edited' in st.session_state:
+        del st.session_state.df_standards_edited
+
     if 'standards' in data:
         st.session_state.df_standards_base = pd.DataFrame(data['standards'])
+        
     if 'projets' in data:
         new_workspace = {}
         for p_name, p_data in data["projets"].items():
-            # CORRECTION DU BUG : On force la création des colonnes si le tableau est vide
             df_prof = pd.DataFrame(p_data["profils"])
             if df_prof.empty: df_prof = pd.DataFrame(columns=COL_PROFILS)
             
@@ -289,7 +306,8 @@ tab1, tab2, tab3, tab4 = st.tabs(["📚 1. Base Standard", f"📦 2. Stock ({st.
 
 with tab1:
     st.subheader("Catalogue des Profils Standards (Commun à tous les projets)")
-    st.session_state.df_standards_base = st.data_editor(
+    # Correction double saisie : on stocke le résultat dans df_standards_edited, on ne touche pas à df_standards_base
+    st.session_state.df_standards_edited = st.data_editor(
         st.session_state.df_standards_base, num_rows="dynamic", use_container_width=True, key="editor_std", hide_index=True,
         column_config={
             "Nom du Profil": st.column_config.TextColumn("Nom du Profil", required=True),
@@ -300,7 +318,8 @@ with tab1:
 
 with tab2:
     st.subheader(f"Profils et Stock dédiés au projet : {st.session_state.projet_actif}")
-    projet_courant["profils"] = st.data_editor(
+    # Correction double saisie : on stocke dans profils_edited
+    projet_courant["profils_edited"] = st.data_editor(
         projet_courant["profils"], num_rows="dynamic", use_container_width=True, key=f"editor_stock_{st.session_state.projet_actif}", hide_index=True,
         column_config={
             "Nom du Profil": st.column_config.TextColumn("Nom du Profil", required=True),
@@ -336,9 +355,10 @@ with tab3:
     if st.session_state.liste_active in projet_courant["listes"]:
         st.markdown(f"### ✏️ Édition de la liste : **{st.session_state.liste_active}**")
         
-        # SÉCURITÉ : Vérifier si la colonne existe bien avant de la lire
-        if "Nom du Profil" in projet_courant["profils"].columns and not projet_courant["profils"].empty:
-            noms_profils_disponibles = projet_courant["profils"]['Nom du Profil'].dropna().unique().tolist()
+        # On alimente le menu déroulant avec les profils fraîchement édités
+        profils_actuels = projet_courant.get("profils_edited", projet_courant["profils"])
+        if "Nom du Profil" in profils_actuels.columns and not profils_actuels.empty:
+            noms_profils_disponibles = profils_actuels['Nom du Profil'].dropna().unique().tolist()
         else:
             noms_profils_disponibles = []
             
@@ -346,7 +366,11 @@ with tab3:
 
         df_liste_active = projet_courant["listes"][st.session_state.liste_active]
         
-        projet_courant["listes"][st.session_state.liste_active] = st.data_editor(
+        if "listes_edited" not in projet_courant:
+            projet_courant["listes_edited"] = {}
+            
+        # Correction double saisie : on stocke dans listes_edited
+        projet_courant["listes_edited"][st.session_state.liste_active] = st.data_editor(
             df_liste_active, num_rows="dynamic", use_container_width=True, key=f"editor_list_{st.session_state.projet_actif}_{st.session_state.liste_active}", hide_index=True,
             column_config={
                 "Référence": st.column_config.TextColumn("Réf."),
@@ -365,7 +389,13 @@ with tab4:
     if st.button("🚀 Lancer l'optimisation du projet entier", type="primary"):
         with st.spinner('Fusion des listes et calcul par l\'IA...'):
             frames_pieces = []
-            for nom_liste, df_l in projet_courant["listes"].items():
+            for nom_liste in projet_courant["listes"].keys():
+                # On utilise les données modifiées pour le calcul si elles existent !
+                if "listes_edited" in projet_courant and nom_liste in projet_courant["listes_edited"]:
+                    df_l = projet_courant["listes_edited"][nom_liste]
+                else:
+                    df_l = projet_courant["listes"][nom_liste]
+                    
                 if not df_l.empty:
                     df_temp = df_l.copy()
                     df_temp['Nom de la Liste'] = nom_liste 
@@ -376,7 +406,9 @@ with tab4:
             if df_pieces_global.empty:
                 st.info("Aucune pièce à optimiser.")
             else:
-                resultats = optimiser_projet_complet(df_pieces_global, projet_courant["profils"], epaisseur_lame)
+                profils_a_utiliser = projet_courant.get("profils_edited", projet_courant["profils"])
+                resultats = optimiser_projet_complet(df_pieces_global, profils_a_utiliser, epaisseur_lame)
+                
                 total_longueur_pieces = 0
                 total_longueur_barres = 0
                 
