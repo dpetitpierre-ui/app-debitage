@@ -8,7 +8,7 @@ import math
 import requests 
 
 # -----------------------------------------------------------------------------
-# 1. CONFIGURATION DE LA PAGE ET CONNEXION SUPABASE (VIA API REST)
+# 1. CONFIGURATION DE LA PAGE ET CONNEXION SUPABASE
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="Optimisation de Débitage Pro", page_icon="🪚", layout="wide")
 
@@ -23,59 +23,81 @@ HEADERS_SUPABASE = {
     "Content-Type": "application/json"
 }
 
-# Colonnes par défaut pour éviter les bugs sur les projets vides
-COL_PROFILS = ["Nom du Profil", "Longueur Barre (mm)", "Largeur (mm)", "Couleur / Finition", "Quantité en stock"]
-COL_LISTES = ["Référence", "Profil", "Longueur max (mm)", "Quantité", "Angle Gauche (°)", "Angle Droit (°)", "Symétrique"]
+# -----------------------------------------------------------------------------
+# 1.2 FORMATEURS STRICTS (CORRECTION DÉFINITIVE DU BUG DE DOUBLE SAISIE)
+# -----------------------------------------------------------------------------
+def formater_df_profils(df):
+    if df is None or df.empty:
+        return pd.DataFrame({"Nom du Profil": pd.Series(dtype='str'), "Longueur Barre (mm)": pd.Series(dtype='float'), "Largeur (mm)": pd.Series(dtype='float'), "Couleur / Finition": pd.Series(dtype='str'), "Quantité en stock": pd.Series(dtype='Int64')})
+    df = df.copy()
+    df["Nom du Profil"] = df["Nom du Profil"].fillna("").astype(str)
+    df["Longueur Barre (mm)"] = pd.to_numeric(df["Longueur Barre (mm)"], errors='coerce')
+    df["Largeur (mm)"] = pd.to_numeric(df["Largeur (mm)"], errors='coerce')
+    df["Couleur / Finition"] = df["Couleur / Finition"].fillna("").astype(str)
+    df["Quantité en stock"] = pd.to_numeric(df["Quantité en stock"], errors='coerce').astype('Int64')
+    return df
+
+def formater_df_listes(df):
+    if df is None or df.empty:
+        return pd.DataFrame({"Référence": pd.Series(dtype='str'), "Profil": pd.Series(dtype='str'), "Longueur max (mm)": pd.Series(dtype='float'), "Quantité": pd.Series(dtype='Int64'), "Angle Gauche (°)": pd.Series(dtype='float'), "Angle Droit (°)": pd.Series(dtype='float'), "Symétrique": pd.Series(dtype='bool')})
+    df = df.copy()
+    df["Référence"] = df["Référence"].fillna("").astype(str)
+    df["Profil"] = df["Profil"].fillna("").astype(str)
+    df["Longueur max (mm)"] = pd.to_numeric(df["Longueur max (mm)"], errors='coerce')
+    df["Quantité"] = pd.to_numeric(df["Quantité"], errors='coerce').astype('Int64')
+    df["Angle Gauche (°)"] = pd.to_numeric(df["Angle Gauche (°)"], errors='coerce')
+    df["Angle Droit (°)"] = pd.to_numeric(df["Angle Droit (°)"], errors='coerce')
+    df["Symétrique"] = df["Symétrique"].fillna(True).astype(bool)
+    return df
+
+def formater_df_standards(df):
+    if df is None or df.empty:
+        return pd.DataFrame({"Nom du Profil": pd.Series(dtype='str'), "Largeur (mm)": pd.Series(dtype='float'), "Couleur / Finition": pd.Series(dtype='str')})
+    df = df.copy()
+    df["Nom du Profil"] = df["Nom du Profil"].fillna("").astype(str)
+    df["Largeur (mm)"] = pd.to_numeric(df["Largeur (mm)"], errors='coerce')
+    df["Couleur / Finition"] = df["Couleur / Finition"].fillna("").astype(str)
+    return df
+
+# Transforme les NaN en null pour éviter les crashs lors de l'envoi JSON
+def safe_export(df):
+    return df.where(pd.notnull(df), None).to_dict(orient='records')
 
 # -----------------------------------------------------------------------------
-# FONCTIONS DE SAUVEGARDE ET CHARGEMENT CLOUD (AVEC CORRECTION DOUBLE SAISIE)
+# FONCTIONS DE SAUVEGARDE ET CHARGEMENT CLOUD
 # -----------------------------------------------------------------------------
 def exporter_workspace_json():
-    # On récupère le catalogue standard édité (ou la base si pas d'édition)
     df_std = st.session_state.get('df_standards_edited', st.session_state.df_standards_base)
-    data = {"standards": df_std.to_dict(orient='records'), "projets": {}}
+    data = {"standards": safe_export(df_std), "projets": {}}
     
     for p_name, p_data in st.session_state.workspace.items():
-        # On priorise toujours les données "éditées" pour la sauvegarde
         df_prof = p_data.get("profils_edited", p_data["profils"])
         
         listes_export = {}
         for l_name, l_base in p_data["listes"].items():
             if "listes_edited" in p_data and l_name in p_data["listes_edited"]:
-                listes_export[l_name] = p_data["listes_edited"][l_name].to_dict(orient='records')
+                listes_export[l_name] = safe_export(p_data["listes_edited"][l_name])
             else:
-                listes_export[l_name] = l_base.to_dict(orient='records')
+                listes_export[l_name] = safe_export(l_base)
                 
         data["projets"][p_name] = {
-            "profils": df_prof.to_dict(orient='records'),
+            "profils": safe_export(df_prof),
             "listes": listes_export
         }
     return data 
 
 def charger_donnees_dans_memoire(data):
-    # Nettoyage de la mémoire d'édition pour éviter les conflits
-    if 'df_standards_edited' in st.session_state:
-        del st.session_state.df_standards_edited
-
+    if 'df_standards_edited' in st.session_state: del st.session_state.df_standards_edited
     if 'standards' in data:
-        st.session_state.df_standards_base = pd.DataFrame(data['standards'])
+        st.session_state.df_standards_base = formater_df_standards(pd.DataFrame(data['standards']))
         
     if 'projets' in data:
         new_workspace = {}
         for p_name, p_data in data["projets"].items():
-            df_prof = pd.DataFrame(p_data["profils"])
-            if df_prof.empty: df_prof = pd.DataFrame(columns=COL_PROFILS)
+            df_prof = formater_df_profils(pd.DataFrame(p_data["profils"]))
+            dict_listes = {l_name: formater_df_listes(pd.DataFrame(l_df)) for l_name, l_df in p_data["listes"].items()}
+            new_workspace[p_name] = {"profils": df_prof, "listes": dict_listes}
             
-            dict_listes = {}
-            for l_name, l_df in p_data["listes"].items():
-                df_l = pd.DataFrame(l_df)
-                if df_l.empty: df_l = pd.DataFrame(columns=COL_LISTES)
-                dict_listes[l_name] = df_l
-                
-            new_workspace[p_name] = {
-                "profils": df_prof,
-                "listes": dict_listes
-            }
         st.session_state.workspace = new_workspace
         st.session_state.projet_actif = list(new_workspace.keys())[0]
         prem_liste = list(new_workspace[st.session_state.projet_actif]["listes"].keys())
@@ -99,23 +121,14 @@ if 'workspace' not in st.session_state:
         st.toast("Aucune donnée cloud trouvée ou erreur de connexion.", icon="⚠️")
 
     if not fichier_charge:
-        if 'df_standards_base' not in st.session_state:
-            st.session_state.df_standards_base = pd.DataFrame([
-                {"Nom du Profil": "Tube Acier 50x50", "Largeur (mm)": 50.0, "Couleur / Finition": "RAL 9005 (Noir)"},
-                {"Nom du Profil": "Cornière 30x30", "Largeur (mm)": 30.0, "Couleur / Finition": "Brut / Galva"}
-            ])
+        st.session_state.df_standards_base = formater_df_standards(pd.DataFrame([
+            {"Nom du Profil": "Tube Acier 50x50", "Largeur (mm)": 50.0, "Couleur / Finition": "RAL 9005 (Noir)"},
+            {"Nom du Profil": "Cornière 30x30", "Largeur (mm)": 30.0, "Couleur / Finition": "Brut / Galva"}
+        ]))
         st.session_state.workspace = {
             "Projet Principal": {
-                "profils": pd.DataFrame([{
-                    "Nom du Profil": "Tube Acier 50x50", "Longueur Barre (mm)": 6000.0, 
-                    "Largeur (mm)": 50.0, "Couleur / Finition": "RAL 9005 (Noir)", "Quantité en stock": 10
-                }]),
-                "listes": {
-                    "Châssis": pd.DataFrame([{
-                        "Référence": "Montant", "Profil": "Tube Acier 50x50", "Longueur max (mm)": 1200.0, 
-                        "Quantité": 2, "Angle Gauche (°)": 45.0, "Angle Droit (°)": 90.0, "Symétrique": True
-                    }])
-                }
+                "profils": formater_df_profils(pd.DataFrame([{"Nom du Profil": "Tube Acier 50x50", "Longueur Barre (mm)": 6000.0, "Largeur (mm)": 50.0, "Couleur / Finition": "RAL 9005 (Noir)", "Quantité en stock": 10}])),
+                "listes": {"Châssis": formater_df_listes(pd.DataFrame([{"Référence": "Montant", "Profil": "Tube Acier 50x50", "Longueur max (mm)": 1200.0, "Quantité": 2, "Angle Gauche (°)": 45.0, "Angle Droit (°)": 90.0, "Symétrique": True}]))}
             }
         }
         st.session_state.projet_actif = "Projet Principal"
@@ -126,11 +139,19 @@ if 'workspace' not in st.session_state:
 # -----------------------------------------------------------------------------
 def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
     resultats_finaux = {}
+    
+    # NETTOYAGE CRITIQUE : on ignore les lignes incomplètes pour ne pas faire planter l'IA
+    df_profils = df_profils.dropna(subset=['Nom du Profil', 'Longueur Barre (mm)', 'Quantité en stock']).copy()
+    df_profils = df_profils[df_profils['Nom du Profil'] != ""]
+    
+    df_pieces = df_pieces.dropna(subset=['Référence', 'Profil', 'Longueur max (mm)', 'Quantité']).copy()
+    df_pieces = df_pieces[df_pieces['Profil'] != ""]
+
     for index, profil in df_profils.iterrows():
         nom_profil = profil['Nom du Profil']
         largeur_profil = profil.get('Largeur (mm)', 50.0) 
+        if pd.isna(largeur_profil): largeur_profil = 50.0 # Sécurité
         
-        if not nom_profil or pd.isna(nom_profil): continue
         pieces_du_profil = df_pieces[df_pieces['Profil'] == nom_profil]
         if pieces_du_profil.empty: continue 
             
@@ -211,6 +232,8 @@ def dessiner_barre(barre_info, epaisseur_lame, largeur_profil, seuil_chute):
     for p in barre_info['pieces']:
         L = p['longueur']
         ang_g, ang_d = p.get('angle_g', 90.0), p.get('angle_d', 90.0)
+        if pd.isna(ang_g): ang_g = 90.0
+        if pd.isna(ang_d): ang_d = 90.0
         
         dx_g = largeur_profil / math.tan(math.radians(ang_g)) if ang_g != 90 else 0
         dx_d = largeur_profil / math.tan(math.radians(ang_d)) if ang_d != 90 else 0
@@ -259,8 +282,8 @@ with st.sidebar:
         if st.button("Créer le projet") and nouveau_projet:
             if nouveau_projet not in st.session_state.workspace:
                 st.session_state.workspace[nouveau_projet] = {
-                    "profils": pd.DataFrame(columns=COL_PROFILS),
-                    "listes": {"Liste 1": pd.DataFrame(columns=COL_LISTES)}
+                    "profils": formater_df_profils(pd.DataFrame()),
+                    "listes": {"Liste 1": formater_df_listes(pd.DataFrame())}
                 }
                 st.session_state.projet_actif = nouveau_projet
                 st.session_state.liste_active = "Liste 1"
@@ -306,7 +329,6 @@ tab1, tab2, tab3, tab4 = st.tabs(["📚 1. Base Standard", f"📦 2. Stock ({st.
 
 with tab1:
     st.subheader("Catalogue des Profils Standards (Commun à tous les projets)")
-    # Correction double saisie : on stocke le résultat dans df_standards_edited, on ne touche pas à df_standards_base
     st.session_state.df_standards_edited = st.data_editor(
         st.session_state.df_standards_base, num_rows="dynamic", use_container_width=True, key="editor_std", hide_index=True,
         column_config={
@@ -318,7 +340,6 @@ with tab1:
 
 with tab2:
     st.subheader(f"Profils et Stock dédiés au projet : {st.session_state.projet_actif}")
-    # Correction double saisie : on stocke dans profils_edited
     projet_courant["profils_edited"] = st.data_editor(
         projet_courant["profils"], num_rows="dynamic", use_container_width=True, key=f"editor_stock_{st.session_state.projet_actif}", hide_index=True,
         column_config={
@@ -346,7 +367,7 @@ with tab3:
             nouvelle_liste = st.text_input("Nom de la nouvelle liste")
             if st.button("Ajouter Liste") and nouvelle_liste:
                 if nouvelle_liste not in projet_courant["listes"]:
-                    projet_courant["listes"][nouvelle_liste] = pd.DataFrame(columns=COL_LISTES)
+                    projet_courant["listes"][nouvelle_liste] = formater_df_listes(pd.DataFrame())
                     st.session_state.liste_active = nouvelle_liste
                     st.rerun()
                 else:
@@ -355,21 +376,17 @@ with tab3:
     if st.session_state.liste_active in projet_courant["listes"]:
         st.markdown(f"### ✏️ Édition de la liste : **{st.session_state.liste_active}**")
         
-        # On alimente le menu déroulant avec les profils fraîchement édités
         profils_actuels = projet_courant.get("profils_edited", projet_courant["profils"])
         if "Nom du Profil" in profils_actuels.columns and not profils_actuels.empty:
-            noms_profils_disponibles = profils_actuels['Nom du Profil'].dropna().unique().tolist()
+            noms_profils_disponibles = profils_actuels['Nom du Profil'].dropna().replace("", pd.NA).dropna().unique().tolist()
         else:
             noms_profils_disponibles = []
             
         if not noms_profils_disponibles: noms_profils_disponibles = ["Aucun profil défini dans le stock"]
 
         df_liste_active = projet_courant["listes"][st.session_state.liste_active]
-        
-        if "listes_edited" not in projet_courant:
-            projet_courant["listes_edited"] = {}
+        if "listes_edited" not in projet_courant: projet_courant["listes_edited"] = {}
             
-        # Correction double saisie : on stocke dans listes_edited
         projet_courant["listes_edited"][st.session_state.liste_active] = st.data_editor(
             df_liste_active, num_rows="dynamic", use_container_width=True, key=f"editor_list_{st.session_state.projet_actif}_{st.session_state.liste_active}", hide_index=True,
             column_config={
@@ -390,7 +407,6 @@ with tab4:
         with st.spinner('Fusion des listes et calcul par l\'IA...'):
             frames_pieces = []
             for nom_liste in projet_courant["listes"].keys():
-                # On utilise les données modifiées pour le calcul si elles existent !
                 if "listes_edited" in projet_courant and nom_liste in projet_courant["listes_edited"]:
                     df_l = projet_courant["listes_edited"][nom_liste]
                 else:
@@ -430,9 +446,9 @@ with tab4:
 
                 for nom_profil, resultat in resultats.items():
                     st.markdown(f"### 🔹 Profil : {nom_profil}")
-                    if resultat == "PAS_DE_STOCK": st.error("❌ Pas de barres en stock.")
+                    if resultat == "PAS_DE_STOCK": st.error("❌ Pas de barres en stock pour les pièces demandées.")
                     elif resultat == "ERREUR_TAILLE": st.error("❌ Impossible : Une pièce est plus longue que la barre.")
-                    elif resultat == "ECHEC": st.error("❌ Aucune solution.")
+                    elif resultat == "ECHEC": st.error("❌ Aucune solution (vérifie tes quantités en stock).")
                     else:
                         st.success(f"✅ {len(resultat['barres'])} barre(s) utilisée(s).")
                         for idx, barre in enumerate(resultat["barres"]):
