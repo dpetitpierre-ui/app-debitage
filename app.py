@@ -353,8 +353,8 @@ with st.sidebar:
                             "epaisseur": float(r["Épaisseur (mm)"]) if pd.notna(r["Épaisseur (mm)"]) else None,
                             "poids_ml": float(r["Poids (kg/m)"]) if pd.notna(r["Poids (kg/m)"]) else None,
                             "couleur": str(r["Couleur"]) if pd.notna(r["Couleur"]) else "",
-                            "longueur_peinture": float(r["Longueur Peinture (mm)"]) if pd.notna(r["Longueur Peinture (mm)"]) else None,
-                            "quantite": 0 
+                            "longueur_peinture": float(r["Longueur Peinture (mm)"]) if pd.notna(r["Longueur Peinture (mm)"]) else None
+                            # La ligne "quantite": 0 a été supprimée ici !
                         })
                 requete_insert("gp_debit_profils", insert_profils)
 
@@ -528,7 +528,7 @@ with tab4:
                     else:
                         total_longueur_pieces = 0
                         total_longueur_barres = 0
-                        total_surface_peinture = 0.0 # Ajout du total global de peinture
+                        total_surface_peinture = 0.0
                         
                         for profil_res in resultats.values():
                             if type(profil_res) == dict and profil_res["statut"] == "SUCCES":
@@ -536,7 +536,6 @@ with tab4:
                                 perimetre = profil_res.get("longueur_peinture", 0)
                                 longueur_barre = profil_res.get("longueur_barre_standard", 0)
                                 
-                                # Calcul de la surface en m2 : (Périmètre * Longueur Barre * Nombre) / 1000000
                                 total_surface_peinture += (perimetre * longueur_barre * nb_barres) / 1000000.0
                                 
                                 for b in profil_res["barres"]:
@@ -562,7 +561,6 @@ with tab4:
                             elif resultat == "ECHEC": 
                                 st.error("❌ Échec inattendu de l'optimiseur.")
                             elif type(resultat) == dict and resultat["statut"] == "SUCCES":
-                                # Calcul de la surface pour ce profil précis
                                 surface_profil = (resultat.get('longueur_peinture', 0) * resultat.get('longueur_barre_standard', 0) * len(resultat['barres'])) / 1000000.0
                                 st.success(f"📦 À commander : {len(resultat['barres'])} barre(s) de {resultat['barres'][0]['barre_longueur']} mm.  *(Surface de peinture : {surface_profil:.2f} m²)*")
                                 
