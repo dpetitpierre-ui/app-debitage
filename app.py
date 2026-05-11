@@ -21,9 +21,9 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# Colonnes de l'interface
+# Colonnes de l'interface (Notion de Stock supprimée !)
 COL_STANDARDS = ["Matériau", "Nom", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)"]
-COL_PROFILS = ["Nom", "Longueur Barre (mm)", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)", "Couleur", "Longueur Peinture (mm)", "Quantité en stock"]
+COL_PROFILS = ["Nom", "Longueur Barre (mm)", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)", "Couleur", "Longueur Peinture (mm)"]
 COL_LISTES = ["Référence", "Profil", "Longueur (mm)", "Quantité", "Angle Gauche (°)", "Angle Droite (°)", "Symétrique"]
 
 # -----------------------------------------------------------------------------
@@ -77,7 +77,6 @@ def formater_df_profils(df):
     df["Poids (kg/m)"] = pd.to_numeric(df["Poids (kg/m)"], errors='coerce')
     df["Couleur"] = df["Couleur"].fillna("").astype(str)
     df["Longueur Peinture (mm)"] = pd.to_numeric(df["Longueur Peinture (mm)"], errors='coerce')
-    df["Quantité en stock"] = pd.to_numeric(df["Quantité en stock"], errors='coerce').astype('Int64')
     return df
 
 def formater_df_listes(df):
@@ -116,7 +115,8 @@ if 'workspace' not in st.session_state:
             for proj in db_projets:
                 nom_p = proj["nom_projet"]
                 
-                prof_data = [{"Nom": p["nom_profil"], "Longueur Barre (mm)": p.get("longueur"), "Section A (mm)": p.get("section_a"), "Section B (mm)": p.get("section_b"), "Épaisseur (mm)": p.get("epaisseur"), "Poids (kg/m)": p.get("poids_ml"), "Couleur": p.get("couleur", ""), "Longueur Peinture (mm)": p.get("longueur_peinture"), "Quantité en stock": p.get("quantite")} for p in db_profils if p["nom_projet"] == nom_p]
+                # Récupération sans la "Quantité en stock"
+                prof_data = [{"Nom": p["nom_profil"], "Longueur Barre (mm)": p.get("longueur"), "Section A (mm)": p.get("section_a"), "Section B (mm)": p.get("section_b"), "Épaisseur (mm)": p.get("epaisseur"), "Poids (kg/m)": p.get("poids_ml"), "Couleur": p.get("couleur", ""), "Longueur Peinture (mm)": p.get("longueur_peinture")} for p in db_profils if p["nom_projet"] == nom_p]
                 
                 pieces_p = [p for p in db_pieces if p["nom_projet"] == nom_p]
                 listes_dict = {}
@@ -152,12 +152,13 @@ if 'workspace' not in st.session_state:
         st.session_state.liste_active = "Liste 1"
 
 # -----------------------------------------------------------------------------
-# FONCTION D'OPTIMISATION MATHÉMATIQUE (AVEC ANTI-EXPLOSION)
+# FONCTION D'OPTIMISATION MATHÉMATIQUE (CALCUL DES COMMANDES)
 # -----------------------------------------------------------------------------
 def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
     resultats_finaux = {}
     
-    df_profils = df_profils.dropna(subset=['Nom', 'Longueur Barre (mm)', 'Quantité en stock']).copy()
+    # Plus besoin de Quantité en stock. On a juste besoin de la Longueur de la barre de référence.
+    df_profils = df_profils.dropna(subset=['Nom', 'Longueur Barre (mm)']).copy()
     df_profils['Nom'] = df_profils['Nom'].astype(str).str.strip()
     df_profils = df_profils[df_profils['Nom'] != ""]
     
@@ -168,6 +169,8 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
     for index, profil in df_profils.iterrows():
         nom_profil = profil['Nom']
         largeur_profil = profil.get('Section A (mm)', 50.0) 
+        longueur_barre_standard = profil.get('Longueur Barre (mm)', 0)
+        
         if pd.isna(largeur_profil): largeur_profil = 50.0
         
         pieces_du_profil = df_pieces[df_pieces['Profil'] == nom_profil]
@@ -185,23 +188,18 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
                     'angle_d': row.get('Angle Droite (°)', 90.0)
                 })
 
-        qte_stock_totale = int(profil['Quantité en stock'])
-        
-        if qte_stock_totale <= 0:
-            resultats_finaux[nom_profil] = "PAS_DE_STOCK"
-            continue
-
         if not pieces_liste:
             continue
             
-        # --- BLINDAGE ANTI-EXPLOSION (1000 BARRES) ---
-        # L'IA n'a pas besoin de regarder 1000 barres pour ranger 10 pièces. 
-        # On limite le nombre de barres virtuelles au pire des cas : 1 pièce par barre.
-        qte_barres_a_fournir_ia = min(qte_stock_totale, len(pieces_liste))
-        barres_liste = [{'id': nom_profil, 'longueur': profil['Longueur Barre (mm)']} for _ in range(qte_barres_a_fournir_ia)]
+        if longueur_barre_standard <= 0:
+            resultats_finaux[nom_profil] = "LONGUEUR_MANQUANTE"
+            continue
 
-        max_barre = max([b['longueur'] for b in barres_liste]) if barres_liste else 0
-        if any(p['longueur'] > max_barre for p in pieces_liste):
+        # L'IA génère autant de barres virtuelles qu'il y a de pièces (Pire des cas = 1 barre commandée par pièce)
+        qte_barres_a_fournir_ia = len(pieces_liste)
+        barres_liste = [{'id': nom_profil, 'longueur': longueur_barre_standard} for _ in range(qte_barres_a_fournir_ia)]
+
+        if any(p['longueur'] > longueur_barre_standard for p in pieces_liste):
             resultats_finaux[nom_profil] = "ERREUR_TAILLE"
             continue
 
@@ -217,7 +215,7 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
         for i in range(len(pieces_liste)):
             model.AddExactlyOne(x[i, j] for j in range(len(barres_liste)))
 
-        # Casser la symétrie de l'IA (accélère le calcul par 100) : obliger l'IA à remplir la barre 1 avant d'ouvrir la barre 2
+        # Anti-explosion & Symétrie : L'IA doit remplir les barres dans l'ordre (1, puis 2, puis 3...)
         for j in range(1, len(barres_liste)):
             model.Add(y[j] <= y[j-1])
 
@@ -254,7 +252,6 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
 # FONCTION DE DESSIN (COMPACTE)
 # -----------------------------------------------------------------------------
 def dessiner_barre(barre_info, epaisseur_lame, largeur_profil, seuil_chute):
-    # Rendu plus compact : 0.6 pouce de hauteur (au lieu de 2)
     fig, ax = plt.subplots(figsize=(12, 0.6)) 
     longueur_totale = barre_info['barre_longueur']
     
@@ -275,7 +272,6 @@ def dessiner_barre(barre_info, epaisseur_lame, largeur_profil, seuil_chute):
         x_br, x_tr = x_max - min((dx_d if dx_d > 0 else 0), L), x_max - min((-dx_d if dx_d < 0 else 0), L)
         
         ax.add_patch(patches.Polygon([(x_bl, 0), (x_tl, largeur_profil), (x_tr, largeur_profil), (x_br, 0)], closed=True, facecolor='#4CAF50', edgecolor='black', linewidth=1))
-        # Texte légèrement plus petit pour rentrer dans la nouvelle taille
         ax.text(position_actuelle + L/2, largeur_profil/2, f"{p['ref']}\n{L}mm", ha='center', va='center', color='white', fontweight='bold', fontsize=8)
         position_actuelle += L
         
@@ -293,7 +289,6 @@ def dessiner_barre(barre_info, epaisseur_lame, largeur_profil, seuil_chute):
     ax.set_ylim(0, largeur_profil * 1.2)
     ax.axis('off')
     
-    # Supprimer les marges blanches parasites autour du schéma
     fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
     
     return fig
@@ -351,7 +346,7 @@ with st.sidebar:
                             "poids_ml": float(r["Poids (kg/m)"]) if pd.notna(r["Poids (kg/m)"]) else None,
                             "couleur": str(r["Couleur"]) if pd.notna(r["Couleur"]) else "",
                             "longueur_peinture": float(r["Longueur Peinture (mm)"]) if pd.notna(r["Longueur Peinture (mm)"]) else None,
-                            "quantite": int(r["Quantité en stock"]) if pd.notna(r["Quantité en stock"]) else 0
+                            "quantite": 0 # Valeur factice pour satisfaire Supabase sans changer sa structure
                         })
                 requete_insert("gp_debit_profils", insert_profils)
 
@@ -390,7 +385,7 @@ with st.sidebar:
 st.title(f"🪚 Projet : {st.session_state.projet_actif}")
 projet_courant = st.session_state.workspace[st.session_state.projet_actif]
 
-tab1, tab2, tab3, tab4 = st.tabs(["📚 1. Base Standard", f"📦 2. Stock ({st.session_state.projet_actif})", "📝 3. Listes de Pièces", "📊 4. Résultats & KPI"])
+tab1, tab2, tab3, tab4 = st.tabs(["📚 1. Base Standard", f"📦 2. Profils du Projet ({st.session_state.projet_actif})", "📝 3. Listes de Pièces", "📊 4. Résultats & Commandes"])
 
 with tab1:
     st.subheader("Catalogue des Profils Standards (Commun)")
@@ -425,7 +420,7 @@ with tab1:
             st.error(f"Erreur Standards : {e}")
 
 with tab2:
-    st.subheader(f"Profils et Stock dédiés au projet : {st.session_state.projet_actif}")
+    st.subheader(f"Profils (Barres d'approvisionnement) : {st.session_state.projet_actif}")
     projet_courant["profils_edited"] = st.data_editor(
         projet_courant["profils"], num_rows="dynamic", use_container_width=True, key=f"editor_stock_{st.session_state.projet_actif}", hide_index=True, 
         column_config={"Nom": st.column_config.TextColumn(required=True)}
@@ -487,11 +482,8 @@ with tab3:
         )
 
 with tab4:
-    st.subheader(f"Plans de coupe du projet : {st.session_state.projet_actif}")
+    st.subheader(f"Plans de coupe et Commandes du projet : {st.session_state.projet_actif}")
     
-    # -----------------------------------------------------------
-    # NOUVEAU : Sélection des listes à optimiser !
-    # -----------------------------------------------------------
     noms_toutes_listes = list(projet_courant["listes"].keys())
     listes_a_optimiser = st.multiselect(
         "Sélectionnez la ou les liste(s) à produire :", 
@@ -504,9 +496,9 @@ with tab4:
         if not listes_a_optimiser:
             st.warning("Veuillez sélectionner au moins une liste à optimiser.")
         else:
-            with st.spinner('Calcul par l\'IA...'):
+            with st.spinner('Calcul des barres à commander par l\'IA...'):
                 frames_pieces = []
-                for nom_liste in listes_a_optimiser: # On boucle SEULEMENT sur les listes sélectionnées
+                for nom_liste in listes_a_optimiser:
                     df_l = projet_courant.get("listes_edited", {}).get(nom_liste, projet_courant["listes"][nom_liste])
                     if not df_l.empty:
                         df_temp = df_l.copy()
@@ -523,7 +515,7 @@ with tab4:
                     
                     if not resultats:
                         st.warning("⚠️ L'optimisation n'a rien pu calculer. Voici ce qu'il manque :")
-                        st.info("1. Avez-vous renseigné du **Stock** (Quantité > 0 et Longueur > 0) dans l'onglet 2 ?\n"
+                        st.info("1. Avez-vous bien renseigné la **Longueur de Barre** dans l'onglet 2 ?\n"
                                 "2. Les noms des profils dans vos listes sont-ils **exactement les mêmes** que ceux de l'onglet 2 ?")
                     else:
                         total_longueur_pieces = sum(p['longueur'] for res in resultats.values() if type(res) == dict and res["statut"] == "SUCCES" for b in res["barres"] for p in b['pieces'])
@@ -539,14 +531,14 @@ with tab4:
 
                         for nom_profil, resultat in resultats.items():
                             st.markdown(f"### 🔹 Profil : {nom_profil}")
-                            if resultat == "PAS_DE_STOCK": 
-                                st.error("❌ Pas de barres en stock pour ce profil. Allez dans l'onglet 2 pour ajouter du stock.")
+                            if resultat == "LONGUEUR_MANQUANTE": 
+                                st.error("❌ Longueur de barre standard manquante pour ce profil. Allez dans l'onglet 2 pour définir la longueur des barres d'approvisionnement.")
                             elif resultat == "ERREUR_TAILLE": 
-                                st.error("❌ Impossible : Vous avez demandé une pièce qui est plus longue que la barre en stock !")
+                                st.error("❌ Impossible : Vous avez demandé une pièce qui est plus longue que la barre standard que vous avez définie !")
                             elif resultat == "ECHEC": 
-                                st.error("❌ Échec : Il n'y a pas assez de quantité en stock pour couper toutes ces pièces.")
+                                st.error("❌ Échec inattendu de l'optimiseur.")
                             elif type(resultat) == dict and resultat["statut"] == "SUCCES":
-                                st.success(f"✅ {len(resultat['barres'])} barre(s) utilisée(s).")
+                                st.success(f"📦 À commander : {len(resultat['barres'])} barre(s) de {resultat['barres'][0]['barre_longueur']} mm.")
                                 for idx, barre in enumerate(resultat["barres"]):
                                     with st.expander(f"Barre {idx+1} (Longueur: {barre['barre_longueur']} mm) - Chute : {barre['chute']:.1f} mm", expanded=True):
                                         st.pyplot(dessiner_barre(barre, epaisseur_lame, resultat["largeur"], seuil_chute))
