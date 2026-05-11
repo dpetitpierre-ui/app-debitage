@@ -21,7 +21,9 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# Colonnes de l'interface (Notion de Stock supprimée)
+# Constantes de l'application
+SEUIL_CHUTE = 300.0 # On fixe informatiquement la chute réutilisable à 30cm minimum
+
 COL_STANDARDS = ["Matériau", "Nom", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)"]
 COL_PROFILS = ["Nom", "Longueur Barre (mm)", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)", "Couleur", "Longueur Peinture (mm)"]
 COL_LISTES = ["Référence", "Profil", "Longueur (mm)", "Quantité", "Angle Gauche (°)", "Angle Droite (°)", "Symétrique"]
@@ -257,7 +259,6 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
 # FONCTION DE DESSIN (ULTRA COMPACTE)
 # -----------------------------------------------------------------------------
 def dessiner_barre(barre_info, epaisseur_lame, largeur_profil, seuil_chute):
-    # Ratio extrêmement étiré (20 unités de large pour 0.4 de haut) pour écraser l'épaisseur visuelle
     fig, ax = plt.subplots(figsize=(20, 0.4)) 
     longueur_totale = barre_info['barre_longueur']
     
@@ -278,7 +279,6 @@ def dessiner_barre(barre_info, epaisseur_lame, largeur_profil, seuil_chute):
         x_br, x_tr = x_max - min((dx_d if dx_d > 0 else 0), L), x_max - min((-dx_d if dx_d < 0 else 0), L)
         
         ax.add_patch(patches.Polygon([(x_bl, 0), (x_tl, largeur_profil), (x_tr, largeur_profil), (x_br, 0)], closed=True, facecolor='#4CAF50', edgecolor='black', linewidth=1))
-        # Police réduite à 7 pour tenir dans les barres fines
         ax.text(position_actuelle + L/2, largeur_profil/2, f"{p['ref']}\n{L}mm", ha='center', va='center', color='white', fontweight='bold', fontsize=7)
         position_actuelle += L
         
@@ -293,13 +293,10 @@ def dessiner_barre(barre_info, epaisseur_lame, largeur_profil, seuil_chute):
         ax.text(position_actuelle + chute/2, largeur_profil/2, f"♻️ Chute\n{chute:.1f} mm" if est_reutilisable else f"Déchet\n{chute:.1f} mm", ha='center', va='center', color='black', fontweight='bold' if est_reutilisable else 'normal', fontsize=7)
         
     ax.set_xlim(0, longueur_totale)
-    # Marges internes réduites au strict minimum
     ax.set_ylim(0, largeur_profil * 1.05)
     ax.axis('off')
     
-    # Supprime toutes les marges blanches autour du dessin
     fig.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0, hspace=0)
-    
     return fig
 
 # -----------------------------------------------------------------------------
@@ -355,7 +352,6 @@ with st.sidebar:
                             "poids_ml": float(r["Poids (kg/m)"]) if pd.notna(r["Poids (kg/m)"]) else None,
                             "couleur": str(r["Couleur"]) if pd.notna(r["Couleur"]) else "",
                             "longueur_peinture": float(r["Longueur Peinture (mm)"]) if pd.notna(r["Longueur Peinture (mm)"]) else None
-                            # CORRECTION: On n'envoie plus la colonne 'quantite' !
                         })
                 requete_insert("gp_debit_profils", insert_profils)
 
@@ -386,7 +382,7 @@ with st.sidebar:
     st.divider()
     st.header("⚙️ Paramètres Machine")
     epaisseur_lame = st.number_input("Lame (mm)", min_value=0.0, value=3.0, step=0.1)
-    seuil_chute = st.number_input("Chute récup. (mm)", min_value=10.0, value=500.0, step=10.0)
+    # Plus de seuil manuel pour les chutes ! C'est automatisé en arrière-plan.
 
 # -----------------------------------------------------------------------------
 # 3. CORPS DE L'APPLICATION
@@ -457,21 +453,32 @@ with tab3:
                 else:
                     st.error("Ce nom existe déjà.")
                     
-        with st.expander("📥 Importer une liste depuis Excel"):
-            fichier_excel = st.file_uploader("Glisser un fichier .xlsx", type=["xlsx"])
-            nom_import = st.text_input("Nom de la liste importée", value="Import Excel" if fichier_excel else "")
+        with st.expander(f"📥 Importer depuis Excel dans la liste actuelle"):
+            fichier_excel = st.file_uploader(f"Ajouter au {st.session_state.liste_active} (.xlsx)", type=["xlsx"])
             
-            if st.button("Importer le fichier", type="primary") and fichier_excel and nom_import:
-                if nom_import not in projet_courant["listes"]:
-                    try:
-                        df_excel = pd.read_excel(fichier_excel)
-                        projet_courant["listes"][nom_import] = formater_df_listes(df_excel)
-                        st.session_state.liste_active = nom_import
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Erreur lors de la lecture du fichier : {e}")
-                else:
-                    st.error("Ce nom de liste existe déjà.")
+            # L'import ajoute directement les pièces à la liste déjà sélectionnée (plus de champ de texte à remplir)
+            if st.button("Importer les pièces", type="primary") and fichier_excel:
+                try:
+                    df_excel = pd.read_excel(fichier_excel)
+                    df_formate = formater_df_listes(df_excel)
+                    
+                    # On supprime les lignes 100% vides de l'Excel pour que ce soit propre
+                    df_formate = df_formate.dropna(subset=["Référence", "Profil"], how='all')
+                    
+                    liste_actuelle = st.session_state.liste_active
+                    df_existante = projet_courant.get("listes_edited", {}).get(liste_actuelle, projet_courant["listes"][liste_actuelle])
+                    
+                    # Fusion des anciennes pièces et des nouvelles
+                    df_fusion = pd.concat([df_existante, df_formate], ignore_index=True)
+                    
+                    projet_courant["listes"][liste_actuelle] = df_fusion
+                    if "listes_edited" not in projet_courant:
+                        projet_courant["listes_edited"] = {}
+                    projet_courant["listes_edited"][liste_actuelle] = df_fusion
+                    
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erreur lors de la lecture du fichier : {e}")
 
     if st.session_state.liste_active in projet_courant["listes"]:
         st.markdown(f"### ✏️ Liste : **{st.session_state.liste_active}**")
@@ -568,5 +575,13 @@ with tab4:
                                 for idx, barre in enumerate(resultat["barres"]):
                                     with st.expander(f"Barre {idx+1} (Longueur: {barre['barre_longueur']} mm) - Chute : {barre['chute']:.1f} mm", expanded=True):
                                         # On utilise explicitement le paramètre pour écraser la marge
-                                        st.pyplot(dessiner_barre(barre, epaisseur_lame, resultat["largeur"], seuil_chute), use_container_width=True)
+                                        st.pyplot(dessiner_barre(barre, epaisseur_lame, resultat["largeur"], SEUIL_CHUTE), use_container_width=True)
+                                
+                                # BILAN EXPLICITE DES CHUTES REUTILISABLES
+                                chutes_utiles = [b['chute'] for b in resultat["barres"] if b['chute'] >= SEUIL_CHUTE]
+                                if chutes_utiles:
+                                    chutes_utiles.sort(reverse=True)
+                                    texte_chutes = ", ".join([f"{c:.1f} mm" for c in chutes_utiles])
+                                    st.info(f"♻️ **Bilan des chutes réutilisables (>300 mm) :** Vous générerez **{len(chutes_utiles)} chute(s)** à conserver en stock ({texte_chutes}).")
+                                        
                             st.divider()
