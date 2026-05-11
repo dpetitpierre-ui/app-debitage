@@ -13,6 +13,7 @@ st.set_page_config(page_title="Optimisation de Débitage Pro", page_icon="🪚",
 
 SUPABASE_URL = "https://wlonolzfkhlyxbojprus.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indsb25vbHpma2hseXhib2pwcnVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQyMjY2ODEsImV4cCI6MjA3OTgwMjY4MX0.FwA0c6iwp3sYfI4zEj7xOK_wJKywA3QKmhY5CVM2XHU"
+NOM_TABLE_SUPABASE = "gp_debit_workspace" # Ancienne variable conservée au cas où
 
 HEADERS = {
     "apikey": SUPABASE_KEY,
@@ -20,10 +21,10 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# Nouvelles colonnes de l'interface demandées
+# Nouvelles colonnes de l'interface demandées (adaptées à ton Excel)
 COL_STANDARDS = ["Matériau", "Nom", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)"]
 COL_PROFILS = ["Nom", "Longueur Barre (mm)", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)", "Couleur", "Longueur Peinture (mm)", "Quantité en stock"]
-COL_LISTES = ["Référence", "Profil", "Longueur max (mm)", "Quantité", "Angle Gauche (°)", "Angle Droit (°)", "Symétrique"]
+COL_LISTES = ["Référence", "Profil", "Longueur (mm)", "Quantité", "Angle Gauche (°)", "Angle Droite (°)", "Symétrique"]
 
 # -----------------------------------------------------------------------------
 # OUTILS DE BASE DE DONNÉES (TRADUCTION INTERFACE <-> SQL)
@@ -93,10 +94,10 @@ def formater_df_listes(df):
             
     df["Référence"] = df["Référence"].fillna("").astype(str)
     df["Profil"] = df["Profil"].fillna("").astype(str)
-    df["Longueur max (mm)"] = pd.to_numeric(df["Longueur max (mm)"], errors='coerce')
+    df["Longueur (mm)"] = pd.to_numeric(df["Longueur (mm)"], errors='coerce')
     df["Quantité"] = pd.to_numeric(df["Quantité"], errors='coerce').astype('Int64')
     df["Angle Gauche (°)"] = pd.to_numeric(df["Angle Gauche (°)"], errors='coerce')
-    df["Angle Droit (°)"] = pd.to_numeric(df["Angle Droit (°)"], errors='coerce')
+    df["Angle Droite (°)"] = pd.to_numeric(df["Angle Droite (°)"], errors='coerce')
     df["Symétrique"] = df["Symétrique"].fillna(True).astype(bool)
     return df
 
@@ -129,7 +130,7 @@ if 'workspace' not in st.session_state:
                 listes_dict = {}
                 
                 if pieces_p:
-                    df_pieces_temp = pd.DataFrame([{"Nom de Liste": pc["nom_liste"], "Référence": pc["reference"], "Profil": pc["profil"], "Longueur max (mm)": pc["longueur"], "Quantité": pc["quantite"], "Angle Gauche (°)": pc["angle_g"], "Angle Droit (°)": pc["angle_d"], "Symétrique": pc["symetrique"]} for pc in pieces_p])
+                    df_pieces_temp = pd.DataFrame([{"Nom de Liste": pc["nom_liste"], "Référence": pc["reference"], "Profil": pc["profil"], "Longueur (mm)": pc["longueur"], "Quantité": pc["quantite"], "Angle Gauche (°)": pc["angle_g"], "Angle Droite (°)": pc["angle_d"], "Symétrique": pc["symetrique"]} for pc in pieces_p])
                     for nom_l in df_pieces_temp["Nom de Liste"].unique():
                         listes_dict[nom_l] = formater_df_listes(df_pieces_temp[df_pieces_temp["Nom de Liste"] == nom_l])
                 else:
@@ -166,7 +167,7 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
     resultats_finaux = {}
     df_profils = df_profils.dropna(subset=['Nom', 'Longueur Barre (mm)', 'Quantité en stock']).copy()
     df_profils = df_profils[df_profils['Nom'] != ""]
-    df_pieces = df_pieces.dropna(subset=['Référence', 'Profil', 'Longueur max (mm)', 'Quantité']).copy()
+    df_pieces = df_pieces.dropna(subset=['Référence', 'Profil', 'Longueur (mm)', 'Quantité']).copy()
     df_pieces = df_pieces[df_pieces['Profil'] != ""]
 
     for index, profil in df_profils.iterrows():
@@ -184,9 +185,9 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
                 pieces_liste.append({
                     'liste': row.get('Nom de la Liste', 'Sans Liste'),
                     'ref': row.get('Référence', f'P{idx}'), 
-                    'longueur': row['Longueur max (mm)'],
+                    'longueur': row['Longueur (mm)'],
                     'angle_g': row.get('Angle Gauche (°)', 90.0),
-                    'angle_d': row.get('Angle Droit (°)', 90.0)
+                    'angle_d': row.get('Angle Droite (°)', 90.0)
                 })
 
         barres_liste = [{'id': nom_profil, 'longueur': profil['Longueur Barre (mm)']} for _ in range(int(profil['Quantité en stock']))]
@@ -305,6 +306,8 @@ with st.sidebar:
                 st.session_state.projet_actif = nouveau_projet
                 st.session_state.liste_active = "Liste 1"
                 st.rerun()
+            else:
+                st.error("Ce nom existe déjà.")
 
     st.divider()
     st.header("☁️ Sauvegarde Multi-Tables")
@@ -351,12 +354,15 @@ with st.sidebar:
                             insert_pieces.append({
                                 "nom_projet": nom_p, "nom_liste": l_name, "reference": ref, 
                                 "profil": str(r["Profil"]) if pd.notna(r["Profil"]) else "",
-                                "longueur": float(r["Longueur max (mm)"]) if pd.notna(r["Longueur max (mm)"]) else 0, 
+                                "longueur": float(r["Longueur (mm)"]) if pd.notna(r["Longueur (mm)"]) else 0, 
                                 "quantite": int(r["Quantité"]) if pd.notna(r["Quantité"]) else 0,
                                 "angle_g": float(r["Angle Gauche (°)"]) if pd.notna(r["Angle Gauche (°)"]) else 90, 
-                                "angle_d": float(r["Angle Droit (°)"]) if pd.notna(r["Angle Droit (°)"]) else 90,
+                                "angle_d": float(r["Angle Droite (°)"]) if pd.notna(r["Angle Droite (°)"]) else 90,
                                 "symetrique": bool(r["Symétrique"])
                             })
+                        elif pd.notna(r["Longueur (mm)"]) or pd.notna(r["Quantité"]):
+                            st.warning(f"⚠️ Une pièce de la liste '{l_name}' a été ignorée car la 'Référence' est vide.")
+                            
                 requete_insert("gp_debit_pieces", insert_pieces)
                 
                 st.success("Projet sauvegardé avec succès !")
@@ -427,13 +433,33 @@ with tab3:
                 st.rerun()
             
     with col_droite:
-        with st.expander("➕ Créer une nouvelle liste"):
-            nouvelle_liste = st.text_input("Nom")
-            if st.button("Ajouter") and nouvelle_liste:
+        with st.expander("➕ Créer une nouvelle liste manuellement"):
+            nouvelle_liste = st.text_input("Nom de la nouvelle liste")
+            if st.button("Ajouter Liste") and nouvelle_liste:
                 if nouvelle_liste not in projet_courant["listes"]:
                     projet_courant["listes"][nouvelle_liste] = formater_df_listes(pd.DataFrame())
                     st.session_state.liste_active = nouvelle_liste
                     st.rerun()
+                else:
+                    st.error("Ce nom existe déjà.")
+                    
+        with st.expander("📥 Importer une liste depuis Excel"):
+            fichier_excel = st.file_uploader("Glisser un fichier .xlsx", type=["xlsx"])
+            nom_import = st.text_input("Nom de la liste importée", value="Import Excel" if fichier_excel else "")
+            
+            if st.button("Importer le fichier", type="primary") and fichier_excel and nom_import:
+                if nom_import not in projet_courant["listes"]:
+                    try:
+                        # Lecture du fichier Excel
+                        df_excel = pd.read_excel(fichier_excel)
+                        # Le "formateur" va automatiquement boucher les trous et ajouter la colonne Symétrique
+                        projet_courant["listes"][nom_import] = formater_df_listes(df_excel)
+                        st.session_state.liste_active = nom_import
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erreur lors de la lecture du fichier : {e}")
+                else:
+                    st.error("Ce nom de liste existe déjà.")
 
     if st.session_state.liste_active in projet_courant["listes"]:
         st.markdown(f"### ✏️ Liste : **{st.session_state.liste_active}**")
