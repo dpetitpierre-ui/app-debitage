@@ -153,7 +153,7 @@ if 'workspace' not in st.session_state:
         st.session_state.liste_active = "Liste 1"
 
 # -----------------------------------------------------------------------------
-# FONCTION D'OPTIMISATION MATHÉMATIQUE
+# FONCTION D'OPTIMISATION MATHÉMATIQUE (TASSEMENT MAXIMAL)
 # -----------------------------------------------------------------------------
 def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
     resultats_finaux = {}
@@ -196,6 +196,10 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
         if longueur_barre_standard <= 0:
             resultats_finaux[nom_profil] = "LONGUEUR_MANQUANTE"
             continue
+            
+        # 1. TRI INTELLIGENT : On range les pièces de la plus grande à la plus petite.
+        # Cela force naturellement l'IA à caler les gros morceaux d'abord, puis à boucher les trous avec les petits.
+        pieces_liste.sort(key=lambda item: item['longueur'], reverse=True)
 
         qte_barres_a_fournir_ia = len(pieces_liste)
         barres_liste = [{'id': nom_profil, 'longueur': longueur_barre_standard} for _ in range(qte_barres_a_fournir_ia)]
@@ -224,7 +228,18 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
             capacite = int(barres_liste[j]['longueur'] * 10)
             model.Add(sum((int(pieces_liste[i]['longueur'] * 10) + lame) * x[i, j] for i in range(len(pieces_liste))) <= (capacite + lame) * y[j])
 
-        model.Minimize(sum(int(barres_liste[j]['longueur'] * 10) * y[j] for j in range(len(barres_liste))))
+        # 2. LOI DE GRAVITÉ (TASSEMENT À GAUCHE)
+        # L'objectif est double : On minimise le nombre de barres (Priorité Absolue)
+        # ET on ajoute une micro-pénalité à chaque fois qu'on met une pièce dans une barre lointaine (Tassement)
+        poids_lourd_barre = max(10000, len(pieces_liste) * len(barres_liste) + 100)
+        
+        termes_objectif = []
+        for j in range(len(barres_liste)):
+            termes_objectif.append(y[j] * poids_lourd_barre)
+            for i in range(len(pieces_liste)):
+                termes_objectif.append(x[i, j] * j)
+                
+        model.Minimize(sum(termes_objectif))
         
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = 10.0
@@ -382,7 +397,6 @@ with st.sidebar:
     st.divider()
     st.header("⚙️ Paramètres Machine")
     epaisseur_lame = st.number_input("Lame (mm)", min_value=0.0, value=3.0, step=0.1)
-    # Plus de seuil manuel pour les chutes ! C'est automatisé en arrière-plan.
 
 # -----------------------------------------------------------------------------
 # 3. CORPS DE L'APPLICATION
@@ -456,19 +470,15 @@ with tab3:
         with st.expander(f"📥 Importer depuis Excel dans la liste actuelle"):
             fichier_excel = st.file_uploader(f"Ajouter au {st.session_state.liste_active} (.xlsx)", type=["xlsx"])
             
-            # L'import ajoute directement les pièces à la liste déjà sélectionnée (plus de champ de texte à remplir)
             if st.button("Importer les pièces", type="primary") and fichier_excel:
                 try:
                     df_excel = pd.read_excel(fichier_excel)
                     df_formate = formater_df_listes(df_excel)
-                    
-                    # On supprime les lignes 100% vides de l'Excel pour que ce soit propre
                     df_formate = df_formate.dropna(subset=["Référence", "Profil"], how='all')
                     
                     liste_actuelle = st.session_state.liste_active
                     df_existante = projet_courant.get("listes_edited", {}).get(liste_actuelle, projet_courant["listes"][liste_actuelle])
                     
-                    # Fusion des anciennes pièces et des nouvelles
                     df_fusion = pd.concat([df_existante, df_formate], ignore_index=True)
                     
                     projet_courant["listes"][liste_actuelle] = df_fusion
@@ -574,7 +584,6 @@ with tab4:
                                 
                                 for idx, barre in enumerate(resultat["barres"]):
                                     with st.expander(f"Barre {idx+1} (Longueur: {barre['barre_longueur']} mm) - Chute : {barre['chute']:.1f} mm", expanded=True):
-                                        # On utilise explicitement le paramètre pour écraser la marge
                                         st.pyplot(dessiner_barre(barre, epaisseur_lame, resultat["largeur"], SEUIL_CHUTE), use_container_width=True)
                                 
                                 # BILAN EXPLICITE DES CHUTES REUTILISABLES
