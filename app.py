@@ -30,15 +30,23 @@ COL_STANDARDS = ["Nom du Profil", "Largeur (mm)", "Couleur / Finition"]
 # -----------------------------------------------------------------------------
 def requete_get(table):
     r = requests.get(f"{SUPABASE_URL}/rest/v1/{table}", headers=HEADERS)
-    return r.json() if r.status_code == 200 else []
+    if r.status_code == 200:
+        return r.json()
+    else:
+        st.error(f"Erreur de lecture ({table}) : {r.text}")
+        return []
 
 def requete_delete(table, colonne, valeur):
     url = f"{SUPABASE_URL}/rest/v1/{table}?{colonne}=eq.{valeur}"
-    requests.delete(url, headers=HEADERS)
+    r = requests.delete(url, headers=HEADERS)
+    if r.status_code not in [200, 204]:
+        raise Exception(f"Erreur suppression ({table}) : {r.text}")
 
 def requete_insert(table, data):
     if not data: return
-    requests.post(f"{SUPABASE_URL}/rest/v1/{table}", headers=HEADERS, json=data)
+    r = requests.post(f"{SUPABASE_URL}/rest/v1/{table}", headers=HEADERS, json=data)
+    if r.status_code not in [200, 201]:
+        raise Exception(f"Erreur insertion ({table}) : {r.text}")
 
 def formater_df_profils(df):
     if df is None or df.empty: return pd.DataFrame(columns=COL_PROFILS)
@@ -126,7 +134,7 @@ if 'workspace' not in st.session_state:
         st.session_state.liste_active = "Liste 1"
 
 # -----------------------------------------------------------------------------
-# FONCTION D'OPTIMISATION MATHÉMATIQUE (Inchangée)
+# FONCTION D'OPTIMISATION MATHÉMATIQUE
 # -----------------------------------------------------------------------------
 def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
     resultats_finaux = {}
@@ -255,7 +263,7 @@ with st.sidebar:
     st.header("📁 Navigation")
     
     liste_projets = list(st.session_state.workspace.keys())
-    projet_choisi = st.selectbox("📌 Projet Actif", liste_projets, index=liste_projets.index(st.session_state.projet_actif))
+    projet_choisi = st.selectbox("📌 Projet Actif", liste_projets, index=liste_projets.index(st.session_state.projet_actif) if st.session_state.projet_actif in liste_projets else 0)
     
     if projet_choisi != st.session_state.projet_actif:
         st.session_state.projet_actif = projet_choisi
@@ -279,40 +287,61 @@ with st.sidebar:
             try:
                 nom_p = st.session_state.projet_actif
                 
-                # 1. Sauvegarder le nom du projet
-                requests.post(f"{SUPABASE_URL}/rest/v1/gp_debit_projets", headers={**HEADERS, "Prefer": "resolution=merge-duplicates"}, params={"on_conflict":"nom_projet"}, json=[{"nom_projet": nom_p}])
+                # 1. Sauvegarder le nom du projet (Méthode POST avec Upsert via headers)
+                url_proj = f"{SUPABASE_URL}/rest/v1/gp_debit_projets"
+                r_proj = requests.post(
+                    url_proj, 
+                    headers={**HEADERS, "Prefer": "resolution=merge-duplicates"}, 
+                    params={"on_conflict":"nom_projet"}, 
+                    json=[{"nom_projet": nom_p}]
+                )
+                if r_proj.status_code not in [200, 201]: raise Exception(f"Erreur table projets : {r_proj.text}")
                 
                 # 2. Nettoyer et envoyer les profils de ce projet
-                df_prof = st.session_state.workspace[nom_p].get("profils_edited", st.session_state.workspace[nom_p]["profils"]).dropna(subset=["Nom du Profil"])
+                df_prof = st.session_state.workspace[nom_p].get("profils_edited", st.session_state.workspace[nom_p]["profils"])
                 requete_delete("gp_debit_profils", "nom_projet", nom_p)
                 
                 insert_profils = []
                 for _, r in df_prof.iterrows():
-                    if pd.notna(r["Nom du Profil"]) and r["Nom du Profil"] != "":
+                    nom_profil = str(r["Nom du Profil"]).strip()
+                    if nom_profil != "" and nom_profil != "nan" and nom_profil != "None":
                         insert_profils.append({
-                            "nom_projet": nom_p, "nom_profil": str(r["Nom du Profil"]), "longueur": float(r["Longueur Barre (mm)"]) if pd.notna(r["Longueur Barre (mm)"]) else 0,
-                            "largeur": float(r["Largeur (mm)"]) if pd.notna(r["Largeur (mm)"]) else 0, "couleur": str(r["Couleur / Finition"]), "quantite": int(r["Quantité en stock"]) if pd.notna(r["Quantité en stock"]) else 0
+                            "nom_projet": nom_p, "nom_profil": nom_profil, 
+                            "longueur": float(r["Longueur Barre (mm)"]) if pd.notna(r["Longueur Barre (mm)"]) else 0,
+                            "largeur": float(r["Largeur (mm)"]) if pd.notna(r["Largeur (mm)"]) else 0, 
+                            "couleur": str(r["Couleur / Finition"]), 
+                            "quantite": int(r["Quantité en stock"]) if pd.notna(r["Quantité en stock"]) else 0
                         })
+                    elif pd.notna(r["Longueur Barre (mm)"]) or pd.notna(r["Quantité en stock"]):
+                        st.warning("⚠️ Une ligne de stock a été ignorée car le 'Nom du Profil' est vide.")
+                        
                 requete_insert("gp_debit_profils", insert_profils)
 
                 # 3. Nettoyer et envoyer les listes de ce projet
                 requete_delete("gp_debit_pieces", "nom_projet", nom_p)
                 insert_pieces = []
                 for l_name, l_base in st.session_state.workspace[nom_p]["listes"].items():
-                    df_liste = st.session_state.workspace[nom_p].get("listes_edited", {}).get(l_name, l_base).dropna(subset=["Référence"])
+                    df_liste = st.session_state.workspace[nom_p].get("listes_edited", {}).get(l_name, l_base)
                     for _, r in df_liste.iterrows():
-                        if pd.notna(r["Référence"]) and r["Référence"] != "":
+                        ref = str(r["Référence"]).strip()
+                        if ref != "" and ref != "nan" and ref != "None":
                             insert_pieces.append({
-                                "nom_projet": nom_p, "nom_liste": l_name, "reference": str(r["Référence"]), "profil": str(r["Profil"]) if pd.notna(r["Profil"]) else "",
-                                "longueur": float(r["Longueur max (mm)"]) if pd.notna(r["Longueur max (mm)"]) else 0, "quantite": int(r["Quantité"]) if pd.notna(r["Quantité"]) else 0,
-                                "angle_g": float(r["Angle Gauche (°)"]) if pd.notna(r["Angle Gauche (°)"]) else 90, "angle_d": float(r["Angle Droit (°)"]) if pd.notna(r["Angle Droit (°)"]) else 90,
+                                "nom_projet": nom_p, "nom_liste": l_name, "reference": ref, 
+                                "profil": str(r["Profil"]) if pd.notna(r["Profil"]) else "",
+                                "longueur": float(r["Longueur max (mm)"]) if pd.notna(r["Longueur max (mm)"]) else 0, 
+                                "quantite": int(r["Quantité"]) if pd.notna(r["Quantité"]) else 0,
+                                "angle_g": float(r["Angle Gauche (°)"]) if pd.notna(r["Angle Gauche (°)"]) else 90, 
+                                "angle_d": float(r["Angle Droit (°)"]) if pd.notna(r["Angle Droit (°)"]) else 90,
                                 "symetrique": bool(r["Symétrique"])
                             })
+                        elif pd.notna(r["Longueur max (mm)"]) or pd.notna(r["Quantité"]):
+                            st.warning(f"⚠️ Une pièce de la liste '{l_name}' a été ignorée car la 'Référence' est vide.")
+                            
                 requete_insert("gp_debit_pieces", insert_pieces)
                 
-                st.success("Projet sauvegardé dans la base !")
+                st.success("Projet sauvegardé dans la base avec succès !")
             except Exception as e:
-                st.error(f"Erreur DB: {e}")
+                st.error(f"❌ Erreur Base de données : {e}")
 
     st.divider()
     st.header("⚙️ Paramètres")
@@ -331,13 +360,18 @@ with tab1:
     st.subheader("Catalogue des Profils Standards (Commun)")
     st.session_state.df_standards_edited = st.data_editor(st.session_state.df_standards_base, num_rows="dynamic", use_container_width=True, key="editor_std", hide_index=True, column_config={"Nom du Profil": st.column_config.TextColumn(required=True)})
     if st.button("Sauvegarder Standards"):
-        requests.delete(f"{SUPABASE_URL}/rest/v1/gp_debit_standards?nom_profil=not.is.null", headers=HEADERS)
-        insert_std = [{"nom_profil": str(r["Nom du Profil"]), "largeur": float(r["Largeur (mm)"]) if pd.notna(r["Largeur (mm)"]) else 0, "couleur": str(r["Couleur / Finition"])} for _, r in st.session_state.df_standards_edited.dropna(subset=["Nom du Profil"]).iterrows() if r["Nom du Profil"]]
-        requete_insert("gp_debit_standards", insert_std)
-        st.toast("Standards sauvegardés", icon="✅")
+        try:
+            r_del = requests.delete(f"{SUPABASE_URL}/rest/v1/gp_debit_standards?nom_profil=not.is.null", headers=HEADERS)
+            if r_del.status_code not in [200, 204]: raise Exception(f"Delete fail: {r_del.text}")
+            
+            insert_std = [{"nom_profil": str(r["Nom du Profil"]), "largeur": float(r["Largeur (mm)"]) if pd.notna(r["Largeur (mm)"]) else 0, "couleur": str(r["Couleur / Finition"])} for _, r in st.session_state.df_standards_edited.iterrows() if pd.notna(r["Nom du Profil"]) and str(r["Nom du Profil"]).strip() != ""]
+            requete_insert("gp_debit_standards", insert_std)
+            st.toast("Standards sauvegardés", icon="✅")
+        except Exception as e:
+            st.error(f"Erreur Standards : {e}")
 
 with tab2:
-    st.subheader(f"Profils et Stock : {st.session_state.projet_actif}")
+    st.subheader(f"Profils et Stock dédiés au projet : {st.session_state.projet_actif}")
     projet_courant["profils_edited"] = st.data_editor(projet_courant["profils"], num_rows="dynamic", use_container_width=True, key=f"editor_stock_{st.session_state.projet_actif}", hide_index=True, column_config={"Nom du Profil": st.column_config.TextColumn(required=True)})
 
 with tab3:
@@ -372,6 +406,7 @@ with tab3:
         projet_courant["listes_edited"][st.session_state.liste_active] = st.data_editor(
             df_liste_active, num_rows="dynamic", use_container_width=True, key=f"editor_list_{st.session_state.projet_actif}_{st.session_state.liste_active}", hide_index=True,
             column_config={
+                "Référence": st.column_config.TextColumn(required=True),
                 "Profil": st.column_config.SelectboxColumn("Profil", options=noms_profils_disponibles, required=True),
             }
         )
