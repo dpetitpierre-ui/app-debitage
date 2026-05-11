@@ -51,6 +51,11 @@ def requete_insert(table, data):
 def formater_df_standards(df):
     if df is None or df.empty: return pd.DataFrame(columns=COL_STANDARDS)
     df = df.copy()
+    # Bouclier : Créer les colonnes manquantes
+    for col in COL_STANDARDS:
+        if col not in df.columns:
+            df[col] = None
+            
     df["Matériau"] = df["Matériau"].fillna("").astype(str)
     df["Nom"] = df["Nom"].fillna("").astype(str)
     df["Section A (mm)"] = pd.to_numeric(df["Section A (mm)"], errors='coerce')
@@ -62,6 +67,11 @@ def formater_df_standards(df):
 def formater_df_profils(df):
     if df is None or df.empty: return pd.DataFrame(columns=COL_PROFILS)
     df = df.copy()
+    # Bouclier : Créer les colonnes manquantes
+    for col in COL_PROFILS:
+        if col not in df.columns:
+            df[col] = None
+            
     df["Nom"] = df["Nom"].fillna("").astype(str)
     df["Longueur Barre (mm)"] = pd.to_numeric(df["Longueur Barre (mm)"], errors='coerce')
     df["Section A (mm)"] = pd.to_numeric(df["Section A (mm)"], errors='coerce')
@@ -76,6 +86,11 @@ def formater_df_profils(df):
 def formater_df_listes(df):
     if df is None or df.empty: return pd.DataFrame(columns=COL_LISTES)
     df = df.copy()
+    # Bouclier : Créer les colonnes manquantes
+    for col in COL_LISTES:
+        if col not in df.columns:
+            df[col] = None
+            
     df["Référence"] = df["Référence"].fillna("").astype(str)
     df["Profil"] = df["Profil"].fillna("").astype(str)
     df["Longueur max (mm)"] = pd.to_numeric(df["Longueur max (mm)"], errors='coerce')
@@ -133,8 +148,8 @@ if 'workspace' not in st.session_state:
             raise Exception("Base vide")
             
     except Exception as e:
-        # Création d'un projet par défaut si la base est vide
-        st.session_state.df_standards_base = formater_df_standards(pd.DataFrame([{"Matériau": "ACIER", "Nom": "Tube 50x50", "Section A (mm)": 50.0, "Section B (mm)": 50.0, "Épaisseur (mm)": 2.0}]))
+        # Création d'un projet par défaut si la base est vide (avec toutes les colonnes)
+        st.session_state.df_standards_base = formater_df_standards(pd.DataFrame([{"Matériau": "ACIER", "Nom": "Tube 50x50", "Section A (mm)": 50.0, "Section B (mm)": 50.0, "Épaisseur (mm)": 2.0, "Poids (kg/m)": None}]))
         st.session_state.workspace = {
             "Nouveau Projet": {
                 "profils": formater_df_profils(pd.DataFrame()),
