@@ -21,7 +21,7 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# Colonnes de l'interface (Notion de Stock supprimée !)
+# Colonnes de l'interface (Notion de Stock supprimée)
 COL_STANDARDS = ["Matériau", "Nom", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)"]
 COL_PROFILS = ["Nom", "Longueur Barre (mm)", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)", "Couleur", "Longueur Peinture (mm)"]
 COL_LISTES = ["Référence", "Profil", "Longueur (mm)", "Quantité", "Angle Gauche (°)", "Angle Droite (°)", "Symétrique"]
@@ -115,7 +115,6 @@ if 'workspace' not in st.session_state:
             for proj in db_projets:
                 nom_p = proj["nom_projet"]
                 
-                # Récupération sans la "Quantité en stock"
                 prof_data = [{"Nom": p["nom_profil"], "Longueur Barre (mm)": p.get("longueur"), "Section A (mm)": p.get("section_a"), "Section B (mm)": p.get("section_b"), "Épaisseur (mm)": p.get("epaisseur"), "Poids (kg/m)": p.get("poids_ml"), "Couleur": p.get("couleur", ""), "Longueur Peinture (mm)": p.get("longueur_peinture")} for p in db_profils if p["nom_projet"] == nom_p]
                 
                 pieces_p = [p for p in db_pieces if p["nom_projet"] == nom_p]
@@ -152,7 +151,7 @@ if 'workspace' not in st.session_state:
         st.session_state.liste_active = "Liste 1"
 
 # -----------------------------------------------------------------------------
-# FONCTION D'OPTIMISATION MATHÉMATIQUE (CALCUL DES COMMANDES)
+# FONCTION D'OPTIMISATION MATHÉMATIQUE
 # -----------------------------------------------------------------------------
 def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
     resultats_finaux = {}
@@ -196,7 +195,6 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
             resultats_finaux[nom_profil] = "LONGUEUR_MANQUANTE"
             continue
 
-        # L'IA génère autant de barres virtuelles qu'il y a de pièces (Pire des cas = 1 barre commandée par pièce)
         qte_barres_a_fournir_ia = len(pieces_liste)
         barres_liste = [{'id': nom_profil, 'longueur': longueur_barre_standard} for _ in range(qte_barres_a_fournir_ia)]
 
@@ -216,7 +214,6 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
         for i in range(len(pieces_liste)):
             model.AddExactlyOne(x[i, j] for j in range(len(barres_liste)))
 
-        # Anti-explosion & Symétrie : L'IA doit remplir les barres dans l'ordre (1, puis 2, puis 3...)
         for j in range(1, len(barres_liste)):
             model.Add(y[j] <= y[j-1])
 
@@ -257,10 +254,11 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
     return resultats_finaux
 
 # -----------------------------------------------------------------------------
-# FONCTION DE DESSIN (COMPACTE)
+# FONCTION DE DESSIN (ULTRA COMPACTE)
 # -----------------------------------------------------------------------------
 def dessiner_barre(barre_info, epaisseur_lame, largeur_profil, seuil_chute):
-    fig, ax = plt.subplots(figsize=(12, 0.6)) 
+    # Ratio extrêmement étiré (20 unités de large pour 0.4 de haut) pour écraser l'épaisseur visuelle
+    fig, ax = plt.subplots(figsize=(20, 0.4)) 
     longueur_totale = barre_info['barre_longueur']
     
     ax.add_patch(patches.Rectangle((0, 0), longueur_totale, largeur_profil, facecolor='#f0f0f0', edgecolor='black'))
@@ -280,7 +278,8 @@ def dessiner_barre(barre_info, epaisseur_lame, largeur_profil, seuil_chute):
         x_br, x_tr = x_max - min((dx_d if dx_d > 0 else 0), L), x_max - min((-dx_d if dx_d < 0 else 0), L)
         
         ax.add_patch(patches.Polygon([(x_bl, 0), (x_tl, largeur_profil), (x_tr, largeur_profil), (x_br, 0)], closed=True, facecolor='#4CAF50', edgecolor='black', linewidth=1))
-        ax.text(position_actuelle + L/2, largeur_profil/2, f"{p['ref']}\n{L}mm", ha='center', va='center', color='white', fontweight='bold', fontsize=8)
+        # Police réduite à 7 pour tenir dans les barres fines
+        ax.text(position_actuelle + L/2, largeur_profil/2, f"{p['ref']}\n{L}mm", ha='center', va='center', color='white', fontweight='bold', fontsize=7)
         position_actuelle += L
         
         if position_actuelle + epaisseur_lame <= longueur_totale and position_actuelle < longueur_totale:
@@ -291,13 +290,15 @@ def dessiner_barre(barre_info, epaisseur_lame, largeur_profil, seuil_chute):
         chute = longueur_totale - position_actuelle
         est_reutilisable = chute >= seuil_chute
         ax.add_patch(patches.Rectangle((position_actuelle, 0), chute, largeur_profil, facecolor='#C8E6C9' if est_reutilisable else '#9E9E9E', edgecolor='black', hatch='' if est_reutilisable else '//'))
-        ax.text(position_actuelle + chute/2, largeur_profil/2, f"♻️ Chute\n{chute:.1f} mm" if est_reutilisable else f"Déchet\n{chute:.1f} mm", ha='center', va='center', color='black', fontweight='bold' if est_reutilisable else 'normal', fontsize=8)
+        ax.text(position_actuelle + chute/2, largeur_profil/2, f"♻️ Chute\n{chute:.1f} mm" if est_reutilisable else f"Déchet\n{chute:.1f} mm", ha='center', va='center', color='black', fontweight='bold' if est_reutilisable else 'normal', fontsize=7)
         
     ax.set_xlim(0, longueur_totale)
-    ax.set_ylim(0, largeur_profil * 1.2)
+    # Marges internes réduites au strict minimum
+    ax.set_ylim(0, largeur_profil * 1.05)
     ax.axis('off')
     
-    fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    # Supprime toutes les marges blanches autour du dessin
+    fig.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0, hspace=0)
     
     return fig
 
@@ -354,7 +355,7 @@ with st.sidebar:
                             "poids_ml": float(r["Poids (kg/m)"]) if pd.notna(r["Poids (kg/m)"]) else None,
                             "couleur": str(r["Couleur"]) if pd.notna(r["Couleur"]) else "",
                             "longueur_peinture": float(r["Longueur Peinture (mm)"]) if pd.notna(r["Longueur Peinture (mm)"]) else None
-                            # La ligne "quantite": 0 a été supprimée ici !
+                            # CORRECTION: On n'envoie plus la colonne 'quantite' !
                         })
                 requete_insert("gp_debit_profils", insert_profils)
 
@@ -566,5 +567,6 @@ with tab4:
                                 
                                 for idx, barre in enumerate(resultat["barres"]):
                                     with st.expander(f"Barre {idx+1} (Longueur: {barre['barre_longueur']} mm) - Chute : {barre['chute']:.1f} mm", expanded=True):
-                                        st.pyplot(dessiner_barre(barre, epaisseur_lame, resultat["largeur"], seuil_chute))
+                                        # On utilise explicitement le paramètre pour écraser la marge
+                                        st.pyplot(dessiner_barre(barre, epaisseur_lame, resultat["largeur"], seuil_chute), use_container_width=True)
                             st.divider()
