@@ -389,7 +389,8 @@ with tab4:
                                 
                                 for idx, barre in enumerate(resultat["barres"]):
                                     with st.expander(f"Barre {idx+1} - Chute : {barre['chute']:.1f} mm", expanded=True):
-                                        st.pyplot(draw.dessiner_barre(barre, epaisseur_lame, resultat["largeur"], SEUIL_CHUTE), use_container_width=True)
+                                        # --- MODIFICATION CTO : Passage des variables section_a et section_b ---
+                                        st.pyplot(draw.dessiner_barre(barre, epaisseur_lame, resultat.get("section_a", 50.0), resultat.get("section_b", 50.0), SEUIL_CHUTE), use_container_width=True)
                                 
                                 chutes_utiles = [b['chute'] for b in resultat["barres"] if b['chute'] >= SEUIL_CHUTE]
                                 if chutes_utiles:
