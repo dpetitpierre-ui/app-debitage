@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import matplotlib.pyplot as plt # Ajout vital pour purger la mémoire
 from io import BytesIO
 
 import database as db
@@ -28,17 +29,13 @@ if 'workspace' not in st.session_state:
         
         liste_projets = list(workspace.keys())
         
-        # --- MODIFICATION CTO : Mémoire individuelle via l'URL ---
-        # 1. On regarde si l'URL contient déjà un projet en mémoire
+        # Mémoire individuelle via l'URL
         projet_en_url = st.query_params.get("projet")
-        
-        # 2. Si le projet existe bien dans la base, on le charge, sinon on prend le premier
         if projet_en_url and projet_en_url in liste_projets:
             st.session_state.projet_actif = projet_en_url
         else:
             st.session_state.projet_actif = liste_projets[0]
             
-        # 3. On met à jour l'URL proprement pour le confort de l'utilisateur
         st.query_params["projet"] = st.session_state.projet_actif
         
         st.session_state.liste_active = list(workspace[st.session_state.projet_actif]["listes"].keys())[0] if workspace[st.session_state.projet_actif]["listes"] else None
@@ -55,10 +52,7 @@ with st.sidebar:
     
     if projet_choisi != st.session_state.projet_actif:
         st.session_state.projet_actif = projet_choisi
-        
-        # --- MODIFICATION CTO : Mise à jour de l'URL au changement de projet ---
         st.query_params["projet"] = projet_choisi 
-        
         st.session_state.liste_active = list(st.session_state.workspace[projet_choisi]["listes"].keys())[0] if st.session_state.workspace[projet_choisi]["listes"] else None
         st.rerun()
 
@@ -68,10 +62,7 @@ with st.sidebar:
             if nouveau_projet not in st.session_state.workspace:
                 st.session_state.workspace[nouveau_projet] = {"profils": db.formater_df_profils(pd.DataFrame()), "listes": {"Liste 1": db.formater_df_listes(pd.DataFrame())}}
                 st.session_state.projet_actif = nouveau_projet
-                
-                # --- MODIFICATION CTO : Mise à jour de l'URL pour le nouveau projet ---
                 st.query_params["projet"] = nouveau_projet 
-                
                 st.session_state.liste_active = "Liste 1"
                 st.rerun()
             else:
@@ -103,7 +94,6 @@ with st.sidebar:
                     
                     try:
                         pieces_ignorees = db.sauvegarder_projet(st.session_state.projet_actif, df_prof_actuel, dict_listes)
-                        # Mise à jour de la base locale après succès
                         projet_courant["profils"] = df_prof_actuel
                         
                         if pieces_ignorees:
@@ -115,12 +105,10 @@ with st.sidebar:
                             st.warning("⚠️ Sauvegardé, MAIS la colonne 'coupe_section' n'existe pas dans Supabase.")
                         else:
                             raise db_err
-
                 except Exception as e:
                     st.error(f"❌ Erreur Base de données : {e}")
 
     st.divider()
-    # --- MODIFICATION CTO : Paramètres fixes et non modifiables ---
     st.header("⚙️ Paramètres Machine")
     st.info(f"🔪 **Épaisseur Lame :** {EPAISSEUR_LAME} mm\n\n🛡️ **Mors de serrage (chute min) :** {CHUTE_MINIMUM} mm\n\n*Ces paramètres sont verrouillés pour garantir l'usinabilité en atelier.*")
 
@@ -160,7 +148,6 @@ with tab1:
         }
     )
     
-    # SECURITÉ 1.1 : Détection suppression Standards
     a_supprime_std = len(st.session_state.df_standards_edited) < len(st.session_state.df_standards_base)
     pwd_std = ""
     if a_supprime_std:
@@ -178,7 +165,7 @@ with tab1:
                     st.toast("Standards sauvegardés", icon="✅")
                 except Exception as e:
                     if str(e) == "WARNING_COLONNE_MANQUANTE_STD":
-                        st.warning("⚠️ Standards sauvegardés, MAIS la colonne 'longueur_barre' n'existe pas dans la table 'gp_debit_standards' sur Supabase.")
+                        st.warning("⚠️ Standards sauvegardés, MAIS la colonne 'longueur_barre' n'existe pas dans Supabase.")
                         st.session_state.df_standards_base = st.session_state.df_standards_edited
                     else:
                         st.error(f"Erreur Standards : {e}")
@@ -308,7 +295,7 @@ with tab3:
             )
 
         else:
-            st.info("💡 Vous pouvez tout éditer ici (quantités, longueurs, ou changer de liste). Tout est synchronisé automatiquement !")
+            st.info("💡 Vous pouvez tout éditer ici. Tout est synchronisé automatiquement !")
             frames_globales = []
             for l_name, df_l in projet_courant["listes"].items():
                 df_temp = projet_courant.get("listes_edited", {}).get(l_name, df_l).copy()
@@ -341,7 +328,7 @@ with tab4:
         if not listes_a_optimiser:
             st.warning("Veuillez sélectionner au moins une liste à optimiser.")
         else:
-            with st.spinner('Calcul des barres à commander par l\'IA...'):
+            with st.spinner('Calcul ultra-rapide en cours...'):
                 frames_pieces = []
                 for nom_liste in listes_a_optimiser:
                     df_l = projet_courant.get("listes_edited", {}).get(nom_liste, projet_courant["listes"][nom_liste])
@@ -391,6 +378,7 @@ with tab4:
                                 "epaisseur_lame": EPAISSEUR_LAME,
                                 "seuil_chute": SEUIL_CHUTE
                             }
+                            # Le PDF peut gérer 1000 barres sans exploser la RAM grâce à son buffer interne
                             pdf_buffer = draw.generer_rapport_pdf(resultats, st.session_state.projet_actif, metrics_pdf)
                             
                             col1, col2, col3, col4, col5 = st.columns([1.5, 1.5, 1.5, 1.5, 2])
@@ -407,19 +395,34 @@ with tab4:
                             
                             if type(resultat) == str: 
                                 if resultat == "ERREUR_TAILLE":
-                                    st.error(f"❌ Impossible : Une pièce est trop grande pour la barre (n'oubliez pas la marge de sécurité de {CHUTE_MINIMUM} mm).")
+                                    st.error(f"❌ Impossible : Une pièce est trop grande pour la barre (marge de sécurité de {CHUTE_MINIMUM} mm).")
                                 elif resultat == "LONGUEUR_MANQUANTE":
-                                    st.error("❌ Impossible : La longueur standard de cette barre n'est pas renseignée (allez dans l'onglet 1 ou 2).")
+                                    st.error("❌ Impossible : La longueur standard de cette barre n'est pas renseignée.")
                                 else:
                                     st.error(f"❌ Erreur sur ce profil : {resultat}")
                             else:
                                 surface_profil = (resultat.get('longueur_peinture', 0) * resultat.get('longueur_barre_standard', 0) * len(resultat['barres'])) / 1000000.0
                                 st.success(f"📦 À commander : {len(resultat['barres'])} barre(s) de {resultat['barres'][0]['barre_longueur']} mm.  *(Surface de peinture : {surface_profil:.2f} m²)*")
                                 
-                                for idx, barre in enumerate(resultat["barres"]):
-                                    with st.expander(f"Barre {idx+1} - Chute : {barre['chute']:.1f} mm", expanded=True):
-                                        st.pyplot(draw.dessiner_barre(barre, EPAISSEUR_LAME, resultat.get("section_a", 50.0), resultat.get("section_b", 50.0), SEUIL_CHUTE), use_container_width=True)
+                                # --- MODIFICATION CTO : LIMITE D'AFFICHAGE & PURGE MÉMOIRE ---
+                                max_affichage_web = 15
+                                nb_total_barres = len(resultat["barres"])
                                 
+                                for idx, barre in enumerate(resultat["barres"]):
+                                    # Sécurité : on arrête de dessiner au-delà de 15 barres pour épargner la RAM
+                                    if idx >= max_affichage_web:
+                                        break
+                                        
+                                    # UX : Seul le premier accordéon s'ouvre par défaut (fluidité)
+                                    with st.expander(f"Barre {idx+1} - Chute : {barre['chute']:.1f} mm", expanded=(idx == 0)):
+                                        fig = draw.dessiner_barre(barre, EPAISSEUR_LAME, resultat.get("section_a", 50.0), resultat.get("section_b", 50.0), SEUIL_CHUTE)
+                                        st.pyplot(fig, use_container_width=True)
+                                        plt.close(fig) # <- LA MAGIE EST ICI : On force la vidange de la RAM
+                                
+                                # Message d'information si le projet est gigantesque
+                                if nb_total_barres > max_affichage_web:
+                                    st.warning(f"⚠️ **Affichage limité ({nb_total_barres} barres au total).**\nPour préserver la vitesse de l'application et la mémoire de votre navigateur, seules les {max_affichage_web} premières barres sont affichées à l'écran. 👉 **Téléchargez le Rapport PDF** ci-dessus pour consulter l'intégralité du plan de coupe pour l'atelier.")
+                                    
                                 chutes_utiles = [b['chute'] for b in resultat["barres"] if b['chute'] >= SEUIL_CHUTE]
                                 if chutes_utiles:
                                     chutes_utiles.sort(reverse=True)
