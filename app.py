@@ -76,6 +76,7 @@ with st.sidebar:
                     
                     try:
                         pieces_ignorees = db.sauvegarder_projet(st.session_state.projet_actif, df_prof_actuel, dict_listes)
+                        # Mise à jour de la base locale après succès
                         projet_courant["profils"] = df_prof_actuel
                         
                         if pieces_ignorees:
@@ -328,11 +329,16 @@ with tab4:
                 if df_pieces_global.empty: 
                     st.info("Aucune pièce à optimiser dans ces listes.")
                 else:
-                    profils_a_utiliser = projet_courant.get("profils_edited", projet_courant["profils"])
+                    # --- CORRECTION : FUSION DES PROFILS ---
+                    # L'IA lira les longueurs de barre à la fois dans l'onglet Projet et dans l'onglet Standards
+                    profils_projet = projet_courant.get("profils_edited", projet_courant["profils"])
+                    profils_standards = st.session_state.get("df_standards_edited", st.session_state.df_standards_base)
+                    profils_a_utiliser = pd.concat([profils_projet, profils_standards]).drop_duplicates(subset=['Nom'], keep='first')
+                    
                     resultats = opt.optimiser_projet_complet(df_pieces_global, profils_a_utiliser, epaisseur_lame)
                     
                     if not resultats:
-                        st.warning("⚠️ L'optimisation n'a rien pu calculer. Avez-vous bien renseigné la Longueur de Barre dans l'onglet 2 ?")
+                        st.warning("⚠️ L'optimisation n'a rien pu calculer. Avez-vous bien renseigné la Longueur de Barre dans l'onglet 1 ou 2 ?")
                     else:
                         total_longueur_pieces = 0
                         total_longueur_barres = 0
@@ -353,6 +359,7 @@ with tab4:
                         if total_longueur_barres > 0:
                             rendement = (total_longueur_pieces / total_longueur_barres) * 100
                             
+                            # --- GÉNÉRATION DU PDF A4 EN ARRIÈRE-PLAN ---
                             metrics_pdf = {
                                 "conso": total_longueur_barres / 1000,
                                 "utile": total_longueur_pieces / 1000,
