@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import matplotlib
-matplotlib.use('Agg') # BOLIUIER 1 : Force le mode serveur sans interface graphique (Anti-Crash Linux)
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from io import BytesIO
 
@@ -16,11 +16,11 @@ st.set_page_config(page_title="Optimisation de Débitage Pro", page_icon="🪚",
 
 # --- CONSTANTES GLOBALES (SÉCURITÉ PRODUCTION) ---
 SEUIL_CHUTE = 300.0 
-EPAISSEUR_LAME = 4.0   # Fixé en dur pour éviter les erreurs de saisie
-CHUTE_MINIMUM = 30.0   # Mors de serrage obligatoire en fin de barre
+EPAISSEUR_LAME = 4.0   
+CHUTE_MINIMUM = 30.0   
 
 # -----------------------------------------------------------------------------
-# BOUCLIER 2 : FONCTIONS D'URL SÉCURISÉES (Compatibles toutes versions Streamlit)
+# BOUCLIER 2 : FONCTIONS D'URL SÉCURISÉES
 # -----------------------------------------------------------------------------
 def get_projet_url():
     try:
@@ -43,7 +43,7 @@ def set_projet_url(nom):
         pass
 
 # -----------------------------------------------------------------------------
-# CHARGEMENT DEPUIS SUPABASE ET GESTION DE LA MÉMOIRE (URL)
+# CHARGEMENT DEPUIS SUPABASE
 # -----------------------------------------------------------------------------
 if 'workspace' not in st.session_state:
     with st.spinner("Connexion à la base de données..."):
@@ -54,7 +54,6 @@ if 'workspace' not in st.session_state:
         
         liste_projets = list(workspace.keys())
         
-        # Mémoire individuelle via l'URL (Sécurisée)
         projet_en_url = get_projet_url()
         if projet_en_url and projet_en_url in liste_projets:
             st.session_state.projet_actif = projet_en_url
@@ -98,7 +97,6 @@ with st.sidebar:
     
     projet_courant = st.session_state.workspace[st.session_state.projet_actif]
     
-    # SECURITÉ 2.1 : Détection suppression Profils de Projet
     df_prof_actuel = projet_courant.get("profils_edited", projet_courant["profils"])
     a_supprime_prof = len(df_prof_actuel) < len(projet_courant["profils"])
     pwd_proj = ""
@@ -162,8 +160,9 @@ with tab1:
                 except Exception as e:
                     st.error(f"Erreur d'import : {e}")
 
+    # BOUCLIER 3 : Retrait pur et simple de 'use_container_width' qui causait le spam d'erreur dans la console
     st.session_state.df_standards_edited = st.data_editor(
-        st.session_state.df_standards_base, num_rows="dynamic", use_container_width=True, key="editor_std", hide_index=True, 
+        st.session_state.df_standards_base, num_rows="dynamic", key="editor_std", hide_index=True, 
         column_config={
             "Matériau": st.column_config.SelectboxColumn("Matériau", options=["ALUMINIUM", "ACIER", "INOX"], required=True),
             "Nom": st.column_config.TextColumn("Nom", required=True),
@@ -198,7 +197,7 @@ with tab1:
 with tab2:
     st.subheader(f"Profils (Barres d'approvisionnement) : {st.session_state.projet_actif}")
     projet_courant["profils_edited"] = st.data_editor(
-        projet_courant["profils"], num_rows="dynamic", use_container_width=True, key=f"editor_stock_{st.session_state.projet_actif}", hide_index=True, 
+        projet_courant["profils"], num_rows="dynamic", key=f"editor_stock_{st.session_state.projet_actif}", hide_index=True, 
         column_config={"Nom": st.column_config.TextColumn(required=True)}
     )
 
@@ -229,7 +228,7 @@ with tab3:
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df_global_export.to_excel(writer, index=False, sheet_name="Toutes les pièces")
-            st.download_button("💾 Exporter tout en Excel (.xlsx)", data=output.getvalue(), file_name=f"{st.session_state.projet_actif}_pieces.xlsx", type="primary", use_container_width=True)
+            st.download_button("💾 Exporter tout en Excel (.xlsx)", data=output.getvalue(), file_name=f"{st.session_state.projet_actif}_pieces.xlsx", type="primary")
 
     with col_gauche:
         mode_vue = st.radio("Mode d'affichage", ["Vue par Liste (Classique)", "Toutes les Pièces (Vue Globale)"], horizontal=True)
@@ -311,7 +310,7 @@ with tab3:
             if "listes_edited" not in projet_courant: projet_courant["listes_edited"] = {}
                 
             projet_courant["listes_edited"][st.session_state.liste_active] = st.data_editor(
-                df_liste_active, num_rows="dynamic", use_container_width=True, key=f"editor_list_{st.session_state.projet_actif}_{st.session_state.liste_active}", hide_index=True,
+                df_liste_active, num_rows="dynamic", key=f"editor_list_{st.session_state.projet_actif}_{st.session_state.liste_active}", hide_index=True,
                 column_config={
                     "Référence": st.column_config.TextColumn(required=True),
                     "Profil": st.column_config.SelectboxColumn("Profil", options=tous_les_profils, required=True),
@@ -330,7 +329,7 @@ with tab3:
             df_global_view = pd.concat(frames_globales, ignore_index=True) if frames_globales else pd.DataFrame(columns=["Nom de la Liste"] + db.COL_LISTES)
             
             df_global_edited = st.data_editor(
-                df_global_view, num_rows="dynamic", use_container_width=True, key=f"editor_global_{st.session_state.projet_actif}", hide_index=True,
+                df_global_view, num_rows="dynamic", key=f"editor_global_{st.session_state.projet_actif}", hide_index=True,
                 column_config={
                     "Nom de la Liste": st.column_config.SelectboxColumn("Nom de la Liste", options=noms_listes, required=True),
                     "Profil": st.column_config.SelectboxColumn("Profil", options=tous_les_profils, required=True),
@@ -403,7 +402,6 @@ with tab4:
                                 "epaisseur_lame": EPAISSEUR_LAME,
                                 "seuil_chute": SEUIL_CHUTE
                             }
-                            # Le PDF peut gérer 1000 barres sans exploser la RAM grâce à son buffer interne
                             pdf_buffer = draw.generer_rapport_pdf(resultats, st.session_state.projet_actif, metrics_pdf)
                             
                             col1, col2, col3, col4, col5 = st.columns([1.5, 1.5, 1.5, 1.5, 2])
@@ -412,7 +410,7 @@ with tab4:
                             col3.metric("Rendement", f"{rendement:.1f} %", f"-{100-rendement:.1f} %", delta_color="inverse")
                             col4.metric("Surface Peinture", f"{total_surface_peinture:.2f} m²")
                             with col5:
-                                st.download_button("📄 Télécharger Rapport PDF (A4)", data=pdf_buffer, file_name=f"Rapport_{st.session_state.projet_actif}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+                                st.download_button("📄 Télécharger Rapport PDF (A4)", data=pdf_buffer, file_name=f"Rapport_{st.session_state.projet_actif}.pdf", type="primary")
                             st.divider()
 
                         for nom_profil, resultat in resultats.items():
@@ -429,22 +427,19 @@ with tab4:
                                 surface_profil = (resultat.get('longueur_peinture', 0) * resultat.get('longueur_barre_standard', 0) * len(resultat['barres'])) / 1000000.0
                                 st.success(f"📦 À commander : {len(resultat['barres'])} barre(s) de {resultat['barres'][0]['barre_longueur']} mm.  *(Surface de peinture : {surface_profil:.2f} m²)*")
                                 
-                                # --- MODIFICATION CTO : LIMITE D'AFFICHAGE & PURGE MÉMOIRE ---
                                 max_affichage_web = 15
                                 nb_total_barres = len(resultat["barres"])
                                 
                                 for idx, barre in enumerate(resultat["barres"]):
-                                    # Sécurité : on arrête de dessiner au-delà de 15 barres pour épargner la RAM
                                     if idx >= max_affichage_web:
                                         break
                                         
-                                    # UX : Seul le premier accordéon s'ouvre par défaut (fluidité)
                                     with st.expander(f"Barre {idx+1} - Chute : {barre['chute']:.1f} mm", expanded=(idx == 0)):
                                         fig = draw.dessiner_barre(barre, EPAISSEUR_LAME, resultat.get("section_a", 50.0), resultat.get("section_b", 50.0), SEUIL_CHUTE)
-                                        st.pyplot(fig, use_container_width=True)
-                                        plt.close(fig) # <- LA MAGIE EST ICI : On force la vidange de la RAM
+                                        # BOUCLIER 3 : Retrait de 'use_container_width' ici aussi
+                                        st.pyplot(fig)
+                                        plt.close(fig) 
                                 
-                                # Message d'information si le projet est gigantesque
                                 if nb_total_barres > max_affichage_web:
                                     st.warning(f"⚠️ **Affichage limité ({nb_total_barres} barres au total).**\nPour préserver la vitesse de l'application et la mémoire de votre navigateur, seules les {max_affichage_web} premières barres sont affichées à l'écran. 👉 **Téléchargez le Rapport PDF** ci-dessus pour consulter l'intégralité du plan de coupe pour l'atelier.")
                                     
