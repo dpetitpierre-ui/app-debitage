@@ -6,13 +6,11 @@ import math
 import io
 
 def dessiner_barre(barre_info, epaisseur_lame, section_a, section_b, seuil_chute):
-    """ Dessin adapté pour l'affichage web (Streamlit) """
     largeur_visuelle = section_a if section_a > 0 else 50.0
     
     fig, ax = plt.subplots(figsize=(20, 0.4)) 
     longueur_totale = barre_info['barre_longueur']
     
-    # --- LOGIQUE CTO : Ajout du titre directement dans le graphique web ---
     faces = set()
     for p in barre_info['pieces']:
         section = p.get('coupe_section', 'A')
@@ -29,13 +27,18 @@ def dessiner_barre(barre_info, epaisseur_lame, section_a, section_b, seuil_chute
     
     for p in barre_info['pieces']:
         L = p['longueur']
-        ang_g, ang_d = p.get('angle_g', 90.0), p.get('angle_d', 90.0)
+        ang_g = p.get('angle_g', 90.0)
+        ang_d = p.get('angle_d', 90.0)
         
-        if pd.isna(ang_g): ang_g = 90.0
-        if pd.isna(ang_d): ang_d = 90.0
+        # --- BOUCLIER CTO : Anti-Division par Zéro (Crash fatal évité) ---
+        if pd.isna(ang_g) or ang_g <= 0: ang_g = 90.0
+        if pd.isna(ang_d) or ang_d <= 0: ang_d = 90.0
         
-        dx_g = largeur_visuelle / math.tan(math.radians(ang_g)) if ang_g != 90 else 0
-        dx_d = largeur_visuelle / math.tan(math.radians(ang_d)) if ang_d != 90 else 0
+        tan_g = math.tan(math.radians(ang_g))
+        dx_g = largeur_visuelle / tan_g if abs(tan_g) > 0.001 else 0
+        
+        tan_d = math.tan(math.radians(ang_d))
+        dx_d = largeur_visuelle / tan_d if abs(tan_d) > 0.001 else 0
         
         x_min, x_max = position_actuelle, position_actuelle + L
         x_bl, x_tl = x_min + min((dx_g if dx_g > 0 else 0), L), x_min + min((-dx_g if dx_g < 0 else 0), L)
@@ -43,7 +46,6 @@ def dessiner_barre(barre_info, epaisseur_lame, section_a, section_b, seuil_chute
         
         ax.add_patch(patches.Polygon([(x_bl, 0), (x_tl, largeur_visuelle), (x_tr, largeur_visuelle), (x_br, 0)], closed=True, facecolor='#4CAF50', edgecolor='black', linewidth=1))
         
-        # --- LOGIQUE D'AFFICHAGE WEB (Texte épuré) ---
         if L >= 300:
             texte = f"{p['ref']}   |   {L:g} mm"
             ax.text(position_actuelle + L/2, largeur_visuelle/2, texte, ha='center', va='center', color='white', fontweight='bold', fontsize=8)
@@ -77,7 +79,6 @@ def dessiner_barre(barre_info, epaisseur_lame, section_a, section_b, seuil_chute
     return fig
 
 def dessiner_barre_pdf(ax, barre_info, epaisseur_lame, section_a, section_b, seuil_chute, longueur_standard):
-    """ Dessin Ultra-Qualitatif adapté pour l'impression A4 (Multi-Barres) """
     largeur_visuelle = section_a if section_a > 0 else 50.0
     longueur_totale = barre_info['barre_longueur']
     
@@ -86,13 +87,18 @@ def dessiner_barre_pdf(ax, barre_info, epaisseur_lame, section_a, section_b, seu
     
     for p in barre_info['pieces']:
         L = p['longueur']
-        ang_g, ang_d = p.get('angle_g', 90.0), p.get('angle_d', 90.0)
+        ang_g = p.get('angle_g', 90.0)
+        ang_d = p.get('angle_d', 90.0)
         
-        if pd.isna(ang_g): ang_g = 90.0
-        if pd.isna(ang_d): ang_d = 90.0
+        # --- BOUCLIER CTO : Anti-Division par Zéro ---
+        if pd.isna(ang_g) or ang_g <= 0: ang_g = 90.0
+        if pd.isna(ang_d) or ang_d <= 0: ang_d = 90.0
         
-        dx_g = largeur_visuelle / math.tan(math.radians(ang_g)) if ang_g != 90 else 0
-        dx_d = largeur_visuelle / math.tan(math.radians(ang_d)) if ang_d != 90 else 0
+        tan_g = math.tan(math.radians(ang_g))
+        dx_g = largeur_visuelle / tan_g if abs(tan_g) > 0.001 else 0
+        
+        tan_d = math.tan(math.radians(ang_d))
+        dx_d = largeur_visuelle / tan_d if abs(tan_d) > 0.001 else 0
         
         x_min, x_max = position_actuelle, position_actuelle + L
         x_bl, x_tl = x_min + min((dx_g if dx_g > 0 else 0), L), x_min + min((-dx_g if dx_g < 0 else 0), L)
@@ -101,7 +107,6 @@ def dessiner_barre_pdf(ax, barre_info, epaisseur_lame, section_a, section_b, seu
         ax.add_patch(patches.Polygon([(x_bl, 0), (x_tl, largeur_visuelle), (x_tr, largeur_visuelle), (x_br, 0)], 
                                      closed=True, facecolor='#27ae60', edgecolor='black', linewidth=0.5))
         
-        # --- LOGIQUE D'AFFICHAGE PDF (Texte épuré) ---
         if L >= 350:
             texte = f"{p['ref']}   |   {L:g} mm"
             ax.text(position_actuelle + L/2, largeur_visuelle/2, texte, ha='center', va='center', color='white', fontweight='bold', fontsize=6)
@@ -138,12 +143,10 @@ def dessiner_barre_pdf(ax, barre_info, epaisseur_lame, section_a, section_b, seu
     ax.axis('off')
 
 def generer_rapport_pdf(resultats, nom_projet, metrics):
-    """ Générateur de rapport PDF au format A4 Professionnel """
     buffer = io.BytesIO()
     with PdfPages(buffer) as pdf:
         
-        # ---------------- PAGE 1 : PAGE DE GARDE ----------------
-        fig_resume, ax = plt.subplots(figsize=(8.27, 11.69)) # Format A4
+        fig_resume, ax = plt.subplots(figsize=(8.27, 11.69))
         ax.axis('off')
         
         ax.text(0.5, 0.90, "RAPPORT DE DÉBITAGE", fontsize=24, ha='center', fontweight='bold', color='#2c3e50')
@@ -179,7 +182,6 @@ def generer_rapport_pdf(resultats, nom_projet, metrics):
         pdf.savefig(fig_resume)
         plt.close(fig_resume)
         
-        # ---------------- PAGES SUIVANTES : PLANS DE COUPE ----------------
         barres_a_dessiner = []
         for nom_profil, resultat in resultats.items():
             if type(resultat) == dict and resultat["statut"] == "SUCCES":
@@ -199,7 +201,7 @@ def generer_rapport_pdf(resultats, nom_projet, metrics):
             lot = barres_a_dessiner[i:i+barres_par_page]
             fig, axes = plt.subplots(nrows=barres_par_page, ncols=1, figsize=(8.27, 11.69))
             
-            if barres_par_page == 1: axes = [axes] # Sécurité
+            if barres_par_page == 1: axes = [axes]
             
             fig.subplots_adjust(left=0.05, right=0.95, top=0.92, bottom=0.05, hspace=0.8)
             fig.suptitle(f"Plans de coupe - {nom_projet} (Page {i//barres_par_page + 1})", fontsize=12, fontweight='bold', color='#2c3e50', y=0.98)
@@ -209,7 +211,6 @@ def generer_rapport_pdf(resultats, nom_projet, metrics):
                 if j < len(lot):
                     info = lot[j]
                     
-                    # --- LOGIQUE CTO : Extraire les faces uniques de cette barre ---
                     faces = set()
                     for p in info['barre']['pieces']:
                         section = p.get('coupe_section', 'A')
@@ -220,7 +221,6 @@ def generer_rapport_pdf(resultats, nom_projet, metrics):
                     face_str = " & ".join(sorted(faces))
                     face_info = f"   |   Face(s) de coupe: {face_str} mm" if face_str else ""
                     
-                    # Le titre contient désormais toutes les infos cruciales
                     titre = f"Profil: {info['profil']}{face_info}   |   Barre {info['idx']} sur {info['total']}   |   Chute: {info['barre']['chute']:.1f} mm"
                     
                     ax.set_title(titre, fontsize=8, loc='left', color='#34495e', pad=5, fontweight='bold')
