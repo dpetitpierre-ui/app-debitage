@@ -16,7 +16,7 @@ HEADERS = {
 # -----------------------------------------------------------------------------
 # DÉFINITION GLOBALE DES COLONNES
 # -----------------------------------------------------------------------------
-COL_STANDARDS = ["Matériau", "Nom", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)"]
+COL_STANDARDS = ["Matériau", "Nom", "Longueur Barre (mm)", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)"]
 COL_PROFILS = ["Nom", "Longueur Barre (mm)", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)", "Couleur", "Longueur Peinture (mm)"]
 # AJOUT : "Coupe sur Section"
 COL_LISTES = ["Référence", "Profil", "Longueur (mm)", "Quantité", "Coupe sur Section", "Angle Gauche (°)", "Angle Droite (°)", "Symétrique"]
@@ -50,18 +50,6 @@ def formater_df_standards(df):
     for col in COL_STANDARDS:
         if col not in df.columns: df[col] = None
     df["Matériau"] = df["Matériau"].fillna("").astype(str)
-    df["Nom"] = df["Nom"].fillna("").astype(str)
-    df["Section A (mm)"] = pd.to_numeric(df["Section A (mm)"], errors='coerce')
-    df["Section B (mm)"] = pd.to_numeric(df["Section B (mm)"], errors='coerce')
-    df["Épaisseur (mm)"] = pd.to_numeric(df["Épaisseur (mm)"], errors='coerce')
-    df["Poids (kg/m)"] = pd.to_numeric(df["Poids (kg/m)"], errors='coerce')
-    return df
-
-def formater_df_profils(df):
-    if df is None or df.empty: return pd.DataFrame(columns=COL_PROFILS)
-    df = df.copy()
-    for col in COL_PROFILS:
-        if col not in df.columns: df[col] = None
     df["Nom"] = df["Nom"].fillna("").astype(str)
     df["Longueur Barre (mm)"] = pd.to_numeric(df["Longueur Barre (mm)"], errors='coerce')
     df["Section A (mm)"] = pd.to_numeric(df["Section A (mm)"], errors='coerce')
@@ -99,7 +87,7 @@ def charger_donnees_initiales():
         db_pieces = _requete_get("gp_debit_pieces")
         
         if db_standards:
-            std_data = [{"Matériau": r.get("materiau", ""), "Nom": r["nom_profil"], "Section A (mm)": r.get("section_a"), "Section B (mm)": r.get("section_b"), "Épaisseur (mm)": r.get("epaisseur"), "Poids (kg/m)": r.get("poids_ml")} for r in db_standards]
+            std_data = [{"Matériau": r.get("materiau", ""), "Nom": r["nom_profil"], "Longueur Barre (mm)": r.get("longueur_barre"), "Section A (mm)": r.get("section_a"), "Section B (mm)": r.get("section_b"), "Épaisseur (mm)": r.get("epaisseur"), "Poids (kg/m)": r.get("poids_ml")} for r in db_standards]
             df_standards_base = formater_df_standards(pd.DataFrame(std_data))
         else:
             df_standards_base = pd.DataFrame(columns=COL_STANDARDS)
@@ -129,7 +117,7 @@ def charger_donnees_initiales():
             raise Exception("Aucun projet trouvé.")
             
     except Exception as e:
-        df_standards_base = formater_df_standards(pd.DataFrame([{"Matériau": "ACIER", "Nom": "Tube 50x50", "Section A (mm)": 50.0, "Section B (mm)": 50.0, "Épaisseur (mm)": 2.0, "Poids (kg/m)": None}]))
+        df_standards_base = formater_df_standards(pd.DataFrame([{"Matériau": "ACIER", "Nom": "Tube 50x50", "Longueur Barre (mm)": 6000.0, "Section A (mm)": 50.0, "Section B (mm)": 50.0, "Épaisseur (mm)": 2.0, "Poids (kg/m)": None}]))
         workspace = {
             "Nouveau Projet": {
                 "profils": formater_df_profils(pd.DataFrame()),
@@ -205,6 +193,7 @@ def sauvegarder_standards(df_standards):
             insert_std.append({
                 "nom_profil": str(r["Nom"]).strip(),
                 "materiau": str(r["Matériau"]) if pd.notna(r["Matériau"]) else "ACIER",
+                "longueur_barre": float(r["Longueur Barre (mm)"]) if pd.notna(r["Longueur Barre (mm)"]) else None,
                 "section_a": float(r["Section A (mm)"]) if pd.notna(r["Section A (mm)"]) else 0,
                 "section_b": float(r["Section B (mm)"]) if pd.notna(r["Section B (mm)"]) else 0,
                 "epaisseur": float(r["Épaisseur (mm)"]) if pd.notna(r["Épaisseur (mm)"]) else None,
@@ -213,4 +202,16 @@ def sauvegarder_standards(df_standards):
             
     r_del = requests.delete(f"{SUPABASE_URL}/rest/v1/gp_debit_standards?nom_profil=not.is.null", headers=HEADERS)
     if r_del.status_code not in [200, 204]: raise Exception(f"Delete fail: {r_del.text}")
-    if insert_std: _requete_insert("gp_debit_standards", insert_std)
+    
+    if insert_std: 
+        try:
+            _requete_insert("gp_debit_standards", insert_std)
+        except Exception as e:
+            if "longueur_barre" in str(e).lower():
+                # La colonne manque dans Supabase, on la retire à la volée et on réessaie
+                for s in insert_std:
+                    s.pop("longueur_barre", None)
+                _requete_insert("gp_debit_standards", insert_std)
+                raise Exception("WARNING_COLONNE_MANQUANTE_STD")
+            else:
+                raise e
