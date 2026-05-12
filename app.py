@@ -10,7 +10,11 @@ import drawing as draw
 # CONFIGURATION DE LA PAGE
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="Optimisation de Débitage Pro", page_icon="🪚", layout="wide")
+
+# --- CONSTANTES GLOBALES (SÉCURITÉ PRODUCTION) ---
 SEUIL_CHUTE = 300.0 
+EPAISSEUR_LAME = 4.0   # Fixé en dur pour éviter les erreurs de saisie
+CHUTE_MINIMUM = 30.0   # Mors de serrage obligatoire en fin de barre
 
 # -----------------------------------------------------------------------------
 # CHARGEMENT DEPUIS SUPABASE
@@ -93,8 +97,9 @@ with st.sidebar:
                     st.error(f"❌ Erreur Base de données : {e}")
 
     st.divider()
+    # --- MODIFICATION CTO : Paramètres fixes et non modifiables ---
     st.header("⚙️ Paramètres Machine")
-    epaisseur_lame = st.number_input("Lame (mm)", min_value=0.0, value=3.0, step=0.1)
+    st.info(f"🔪 **Épaisseur Lame :** {EPAISSEUR_LAME} mm\n\n🛡️ **Mors de serrage (chute min) :** {CHUTE_MINIMUM} mm\n\n*Ces paramètres sont verrouillés pour garantir l'usinabilité en atelier.*")
 
 # -----------------------------------------------------------------------------
 # CORPS DE L'APPLICATION
@@ -173,7 +178,6 @@ with tab3:
         for nom_l in noms_listes:
             df_apercu = projet_courant.get("listes_edited", {}).get(nom_l, projet_courant["listes"][nom_l])
             
-            # Correction Typage Quantité
             qte = int(pd.to_numeric(df_apercu['Quantité'], errors='coerce').fillna(0).sum()) if not df_apercu.empty else 0
             
             st.write(f"- **{nom_l}** : {qte} pièce(s)")
@@ -299,7 +303,6 @@ with tab3:
                 }
             )
             
-            # --- SYNCHRONISATION AUTOMATIQUE ---
             nouvelles_listes = {}
             for l_name in noms_listes: 
                 df_filtre = df_global_edited[df_global_edited["Nom de la Liste"] == l_name].drop(columns=["Nom de la Liste"])
@@ -329,13 +332,12 @@ with tab4:
                 if df_pieces_global.empty: 
                     st.info("Aucune pièce à optimiser dans ces listes.")
                 else:
-                    # --- CORRECTION : FUSION DES PROFILS ---
-                    # L'IA lira les longueurs de barre à la fois dans l'onglet Projet et dans l'onglet Standards
                     profils_projet = projet_courant.get("profils_edited", projet_courant["profils"])
                     profils_standards = st.session_state.get("df_standards_edited", st.session_state.df_standards_base)
                     profils_a_utiliser = pd.concat([profils_projet, profils_standards]).drop_duplicates(subset=['Nom'], keep='first')
                     
-                    resultats = opt.optimiser_projet_complet(df_pieces_global, profils_a_utiliser, epaisseur_lame)
+                    # --- MODIFICATION CTO : Passage des constantes ---
+                    resultats = opt.optimiser_projet_complet(df_pieces_global, profils_a_utiliser, EPAISSEUR_LAME, CHUTE_MINIMUM)
                     
                     if not resultats:
                         st.warning("⚠️ L'optimisation n'a rien pu calculer. Avez-vous bien renseigné la Longueur de Barre dans l'onglet 1 ou 2 ?")
@@ -359,13 +361,12 @@ with tab4:
                         if total_longueur_barres > 0:
                             rendement = (total_longueur_pieces / total_longueur_barres) * 100
                             
-                            # --- GÉNÉRATION DU PDF A4 EN ARRIÈRE-PLAN ---
                             metrics_pdf = {
                                 "conso": total_longueur_barres / 1000,
                                 "utile": total_longueur_pieces / 1000,
                                 "rendement": rendement,
                                 "peinture": total_surface_peinture,
-                                "epaisseur_lame": epaisseur_lame,
+                                "epaisseur_lame": EPAISSEUR_LAME,
                                 "seuil_chute": SEUIL_CHUTE
                             }
                             pdf_buffer = draw.generer_rapport_pdf(resultats, st.session_state.projet_actif, metrics_pdf)
@@ -381,16 +382,22 @@ with tab4:
 
                         for nom_profil, resultat in resultats.items():
                             st.markdown(f"### 🔹 Profil : {nom_profil}")
+                            
+                            # --- MODIFICATION CTO : Gestion des erreurs claires ---
                             if type(resultat) == str: 
-                                st.error(f"❌ Erreur sur ce profil : {resultat}")
+                                if resultat == "ERREUR_TAILLE":
+                                    st.error(f"❌ Impossible : Une pièce est trop grande pour la barre (n'oubliez pas la marge de sécurité de {CHUTE_MINIMUM} mm).")
+                                elif resultat == "LONGUEUR_MANQUANTE":
+                                    st.error("❌ Impossible : La longueur standard de cette barre n'est pas renseignée (allez dans l'onglet 1 ou 2).")
+                                else:
+                                    st.error(f"❌ Erreur sur ce profil : {resultat}")
                             else:
                                 surface_profil = (resultat.get('longueur_peinture', 0) * resultat.get('longueur_barre_standard', 0) * len(resultat['barres'])) / 1000000.0
                                 st.success(f"📦 À commander : {len(resultat['barres'])} barre(s) de {resultat['barres'][0]['barre_longueur']} mm.  *(Surface de peinture : {surface_profil:.2f} m²)*")
                                 
                                 for idx, barre in enumerate(resultat["barres"]):
                                     with st.expander(f"Barre {idx+1} - Chute : {barre['chute']:.1f} mm", expanded=True):
-                                        # --- MODIFICATION CTO : Passage des variables section_a et section_b ---
-                                        st.pyplot(draw.dessiner_barre(barre, epaisseur_lame, resultat.get("section_a", 50.0), resultat.get("section_b", 50.0), SEUIL_CHUTE), use_container_width=True)
+                                        st.pyplot(draw.dessiner_barre(barre, EPAISSEUR_LAME, resultat.get("section_a", 50.0), resultat.get("section_b", 50.0), SEUIL_CHUTE), use_container_width=True)
                                 
                                 chutes_utiles = [b['chute'] for b in resultat["barres"] if b['chute'] >= SEUIL_CHUTE]
                                 if chutes_utiles:
