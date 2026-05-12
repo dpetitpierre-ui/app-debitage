@@ -12,17 +12,27 @@ def dessiner_barre(barre_info, epaisseur_lame, section_a, section_b, seuil_chute
     fig, ax = plt.subplots(figsize=(20, 0.4)) 
     longueur_totale = barre_info['barre_longueur']
     
+    # --- LOGIQUE CTO : Ajout du titre directement dans le graphique web ---
+    faces = set()
+    for p in barre_info['pieces']:
+        section = p.get('coupe_section', 'A')
+        face = section_b if section == 'B' else section_a
+        if pd.notna(face) and face > 0:
+            faces.add(f"{face:g}")
+            
+    face_str = " & ".join(sorted(faces))
+    if face_str:
+        ax.set_title(f"Face(s) de coupe : {face_str} mm", loc='left', fontsize=9, fontweight='bold', color='#333333', pad=5)
+
     ax.add_patch(patches.Rectangle((0, 0), longueur_totale, largeur_visuelle, facecolor='#f0f0f0', edgecolor='black'))
     position_actuelle = 0
     
     for p in barre_info['pieces']:
         L = p['longueur']
         ang_g, ang_d = p.get('angle_g', 90.0), p.get('angle_d', 90.0)
-        section = p.get('coupe_section', 'A') 
+        
         if pd.isna(ang_g): ang_g = 90.0
         if pd.isna(ang_d): ang_d = 90.0
-        
-        valeur_coupe = section_b if section == 'B' else section_a
         
         dx_g = largeur_visuelle / math.tan(math.radians(ang_g)) if ang_g != 90 else 0
         dx_d = largeur_visuelle / math.tan(math.radians(ang_d)) if ang_d != 90 else 0
@@ -33,26 +43,18 @@ def dessiner_barre(barre_info, epaisseur_lame, section_a, section_b, seuil_chute
         
         ax.add_patch(patches.Polygon([(x_bl, 0), (x_tl, largeur_visuelle), (x_tr, largeur_visuelle), (x_br, 0)], closed=True, facecolor='#4CAF50', edgecolor='black', linewidth=1))
         
-        # --- LOGIQUE D'AFFICHAGE RESPONSIVE (WEB) ---
-        valeur_coupe_str = f"Face: {valeur_coupe:g}" if pd.notna(valeur_coupe) and valeur_coupe > 0 else ""
-        
-        if L >= 400:
+        # --- LOGIQUE D'AFFICHAGE WEB (Texte épuré) ---
+        if L >= 300:
             texte = f"{p['ref']}   |   {L:g} mm"
-            if valeur_coupe_str: texte += f"   |   {valeur_coupe_str}"
             ax.text(position_actuelle + L/2, largeur_visuelle/2, texte, ha='center', va='center', color='white', fontweight='bold', fontsize=8)
-        elif L >= 150:
+        elif L >= 120:
             texte = f"{p['ref']}\n{L:g} mm"
-            if valeur_coupe_str: texte += f"\n({valeur_coupe_str})"
             ax.text(position_actuelle + L/2, largeur_visuelle/2, texte, ha='center', va='center', color='white', fontweight='bold', fontsize=7)
         elif L >= 60:
             texte = f"{p['ref']} | {L:g} mm"
-            if valeur_coupe_str: texte += f" ({valeur_coupe_str})"
-            # Rotation à 90 degrés pour éviter le chevauchement horizontal
             ax.text(position_actuelle + L/2, largeur_visuelle/2, texte, ha='center', va='center', color='white', fontweight='bold', fontsize=6, rotation=90)
         elif L >= 20:
             texte = f"{L:g}"
-            if pd.notna(valeur_coupe) and valeur_coupe > 0:
-                texte += f" (S:{valeur_coupe:g})"
             ax.text(position_actuelle + L/2, largeur_visuelle/2, texte, ha='center', va='center', color='white', fontsize=5, rotation=90)
             
         position_actuelle += L
@@ -71,7 +73,7 @@ def dessiner_barre(barre_info, epaisseur_lame, section_a, section_b, seuil_chute
     ax.set_ylim(0, largeur_visuelle * 1.05)
     ax.axis('off')
     
-    fig.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0, hspace=0)
+    fig.subplots_adjust(left=0.01, right=0.99, top=0.85, bottom=0.05, wspace=0, hspace=0)
     return fig
 
 def dessiner_barre_pdf(ax, barre_info, epaisseur_lame, section_a, section_b, seuil_chute, longueur_standard):
@@ -85,12 +87,9 @@ def dessiner_barre_pdf(ax, barre_info, epaisseur_lame, section_a, section_b, seu
     for p in barre_info['pieces']:
         L = p['longueur']
         ang_g, ang_d = p.get('angle_g', 90.0), p.get('angle_d', 90.0)
-        section = p.get('coupe_section', 'A') 
         
         if pd.isna(ang_g): ang_g = 90.0
         if pd.isna(ang_d): ang_d = 90.0
-        
-        valeur_coupe = section_b if section == 'B' else section_a
         
         dx_g = largeur_visuelle / math.tan(math.radians(ang_g)) if ang_g != 90 else 0
         dx_d = largeur_visuelle / math.tan(math.radians(ang_d)) if ang_d != 90 else 0
@@ -102,30 +101,18 @@ def dessiner_barre_pdf(ax, barre_info, epaisseur_lame, section_a, section_b, seu
         ax.add_patch(patches.Polygon([(x_bl, 0), (x_tl, largeur_visuelle), (x_tr, largeur_visuelle), (x_br, 0)], 
                                      closed=True, facecolor='#27ae60', edgecolor='black', linewidth=0.5))
         
-        # --- LOGIQUE D'AFFICHAGE RESPONSIVE (PDF A4) ---
-        valeur_coupe_str = f"Face: {valeur_coupe:g}" if pd.notna(valeur_coupe) and valeur_coupe > 0 else ""
-        
-        if L >= 500:
+        # --- LOGIQUE D'AFFICHAGE PDF (Texte épuré) ---
+        if L >= 350:
             texte = f"{p['ref']}   |   {L:g} mm"
-            if valeur_coupe_str: texte += f"   |   {valeur_coupe_str}"
             ax.text(position_actuelle + L/2, largeur_visuelle/2, texte, ha='center', va='center', color='white', fontweight='bold', fontsize=6)
-            
-        elif L >= 250:
+        elif L >= 150:
             texte = f"{p['ref']}\n{L:g} mm"
-            if valeur_coupe_str: texte += f"\n({valeur_coupe_str})"
             ax.text(position_actuelle + L/2, largeur_visuelle/2, texte, ha='center', va='center', color='white', fontweight='bold', fontsize=5)
-            
-        elif L >= 80:
+        elif L >= 60:
             texte = f"{p['ref']} | {L:g} mm"
-            if valeur_coupe_str: texte += f" ({valeur_coupe_str})"
-            # Rotation à 90° pour les pièces plus courtes que 250mm
             ax.text(position_actuelle + L/2, largeur_visuelle/2, texte, ha='center', va='center', color='white', fontweight='bold', fontsize=4.5, rotation=90)
-            
-        elif L >= 30:
+        elif L >= 20:
             texte = f"{L:g}"
-            if pd.notna(valeur_coupe) and valeur_coupe > 0:
-                texte += f" (S:{valeur_coupe:g})"
-            # Rotation à 90° pour les minuscules morceaux
             ax.text(position_actuelle + L/2, largeur_visuelle/2, texte, ha='center', va='center', color='white', fontsize=4, rotation=90)
             
         position_actuelle += L
@@ -221,7 +208,21 @@ def generer_rapport_pdf(resultats, nom_projet, metrics):
                 ax = axes[j]
                 if j < len(lot):
                     info = lot[j]
-                    titre = f"Profil: {info['profil']}   |   Barre {info['idx']} sur {info['total']}   |   Chute: {info['barre']['chute']:.1f} mm"
+                    
+                    # --- LOGIQUE CTO : Extraire les faces uniques de cette barre ---
+                    faces = set()
+                    for p in info['barre']['pieces']:
+                        section = p.get('coupe_section', 'A')
+                        face = info['section_b'] if section == 'B' else info['section_a']
+                        if pd.notna(face) and face > 0:
+                            faces.add(f"{face:g}")
+                            
+                    face_str = " & ".join(sorted(faces))
+                    face_info = f"   |   Face(s) de coupe: {face_str} mm" if face_str else ""
+                    
+                    # Le titre contient désormais toutes les infos cruciales
+                    titre = f"Profil: {info['profil']}{face_info}   |   Barre {info['idx']} sur {info['total']}   |   Chute: {info['barre']['chute']:.1f} mm"
+                    
                     ax.set_title(titre, fontsize=8, loc='left', color='#34495e', pad=5, fontweight='bold')
                     dessiner_barre_pdf(ax, info['barre'], metrics['epaisseur_lame'], info['section_a'], info['section_b'], metrics['seuil_chute'], info['longueur_standard'])
                 else:
