@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
+from io import BytesIO
 
-# IMPORT DE NOS TROIS NOUVEAUX MODULES EXPERTS
 import database as db
 import optimizer as opt
 import drawing as draw
@@ -10,12 +10,10 @@ import drawing as draw
 # CONFIGURATION DE LA PAGE
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="Optimisation de Débitage Pro", page_icon="🪚", layout="wide")
-
-# Constantes de l'application
-SEUIL_CHUTE = 300.0 # Chute réutilisable à 30cm minimum
+SEUIL_CHUTE = 300.0 
 
 # -----------------------------------------------------------------------------
-# CHARGEMENT DEPUIS SUPABASE (Délégué à database.py)
+# CHARGEMENT DEPUIS SUPABASE
 # -----------------------------------------------------------------------------
 if 'workspace' not in st.session_state:
     with st.spinner("Connexion à la base de données..."):
@@ -61,26 +59,31 @@ with st.sidebar:
                 nom_p = st.session_state.projet_actif
                 projet_courant = st.session_state.workspace[nom_p]
                 
-                # Extraction propre des données éditées par l'utilisateur
                 df_prof = projet_courant.get("profils_edited", projet_courant["profils"])
                 dict_listes = {}
                 for l_name, l_base in projet_courant["listes"].items():
                     dict_listes[l_name] = projet_courant.get("listes_edited", {}).get(l_name, l_base)
                 
-                # Appel au module de base de données
-                pieces_ignorees = db.sauvegarder_projet(nom_p, df_prof, dict_listes)
-                
-                if pieces_ignorees:
-                    for nom_l in set(pieces_ignorees):
-                        st.warning(f"⚠️ Une pièce de la liste '{nom_l}' a été ignorée car la 'Référence' est vide.")
-                        
-                st.success("Projet sauvegardé avec succès !")
+                try:
+                    pieces_ignorees = db.sauvegarder_projet(nom_p, df_prof, dict_listes)
+                    if pieces_ignorees:
+                        for nom_l in set(pieces_ignorees):
+                            st.warning(f"⚠️ Une pièce de la liste '{nom_l}' a été ignorée car la 'Référence' est vide.")
+                    st.success("Projet sauvegardé avec succès !")
+                except Exception as db_err:
+                    if str(db_err) == "WARNING_COLONNE_MANQUANTE":
+                        st.warning("⚠️ Projet sauvegardé, MAIS la colonne 'coupe_section' n'existe pas encore dans votre base Supabase. Merci de l'ajouter dans la table 'gp_debit_pieces' (type texte).")
+                    else:
+                        raise db_err
+
             except Exception as e:
                 st.error(f"❌ Erreur Base de données : {e}")
 
     st.divider()
     st.header("⚙️ Paramètres Machine")
     epaisseur_lame = st.number_input("Lame (mm)", min_value=0.0, value=3.0, step=0.1)
+    
+    st.info("💡 **Astuce Pro :** Sur tous les tableaux, cliquez sur l'en-tête d'une colonne pour **Trier**, ou passez la souris sur le tableau pour voir la loupe de **Recherche** en haut à droite !")
 
 # -----------------------------------------------------------------------------
 # CORPS DE L'APPLICATION
@@ -117,77 +120,100 @@ with tab2:
     )
 
 with tab3:
-    col_gauche, col_droite = st.columns([1, 1])
+    col_gauche, col_droite = st.columns([3, 1])
     noms_listes = list(projet_courant["listes"].keys())
     
-    with col_gauche:
-        if noms_listes:
-            liste_choisie = st.selectbox("📂 Liste active :", noms_listes, index=noms_listes.index(st.session_state.liste_active) if st.session_state.liste_active in noms_listes else 0)
-            if liste_choisie != st.session_state.liste_active:
-                st.session_state.liste_active = liste_choisie
-                st.rerun()
-            
     with col_droite:
-        with st.expander("➕ Créer une nouvelle liste manuellement"):
-            nouvelle_liste = st.text_input("Nom de la nouvelle liste")
-            if st.button("Ajouter Liste") and nouvelle_liste:
-                if nouvelle_liste not in projet_courant["listes"]:
-                    projet_courant["listes"][nouvelle_liste] = db.formater_df_listes(pd.DataFrame())
-                    st.session_state.liste_active = nouvelle_liste
-                    st.rerun()
-                else:
-                    st.error("Ce nom existe déjà.")
-                    
-        with st.expander(f"📥 Importer depuis Excel dans la liste actuelle"):
-            fichier_excel = st.file_uploader(f"Ajouter au {st.session_state.liste_active} (.xlsx)", type=["xlsx"])
+        st.markdown("### 📊 Aperçu du Projet")
+        total_pieces = 0
+        frames_pour_export = []
+        for nom_l in noms_listes:
+            df_apercu = projet_courant.get("listes_edited", {}).get(nom_l, projet_courant["listes"][nom_l])
+            qte = df_apercu['Quantité'].sum() if not df_apercu.empty else 0
+            st.write(f"- **{nom_l}** : {int(qte)} pièce(s)")
+            total_pieces += qte
             
-            if st.button("Importer les pièces", type="primary") and fichier_excel:
-                try:
-                    df_excel = pd.read_excel(fichier_excel)
-                    df_formate = db.formater_df_listes(df_excel)
-                    df_formate = df_formate.dropna(subset=["Référence", "Profil"], how='all')
-                    
-                    liste_actuelle = st.session_state.liste_active
-                    df_existante = projet_courant.get("listes_edited", {}).get(liste_actuelle, projet_courant["listes"][liste_actuelle])
-                    
-                    df_fusion = pd.concat([df_existante, df_formate], ignore_index=True)
-                    
-                    projet_courant["listes"][liste_actuelle] = df_fusion
-                    if "listes_edited" not in projet_courant:
-                        projet_courant["listes_edited"] = {}
-                    projet_courant["listes_edited"][liste_actuelle] = df_fusion
-                    
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Erreur lors de la lecture du fichier : {e}")
+            # Préparation pour l'export Excel
+            if not df_apercu.empty:
+                df_export = df_apercu.copy()
+                df_export.insert(0, "Nom de la Liste", nom_l)
+                frames_pour_export.append(df_export)
+                
+        st.divider()
+        if frames_pour_export:
+            df_global_export = pd.concat(frames_pour_export, ignore_index=True)
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df_global_export.to_excel(writer, index=False, sheet_name="Toutes les pièces")
+            st.download_button("💾 Exporter tout en Excel (.xlsx)", data=output.getvalue(), file_name=f"{st.session_state.projet_actif}_pieces.xlsx", type="primary", use_container_width=True)
 
-    if st.session_state.liste_active in projet_courant["listes"]:
-        st.markdown(f"### ✏️ Liste : **{st.session_state.liste_active}**")
+    with col_gauche:
+        mode_vue = st.radio("Mode d'affichage", ["Vue par Liste (Classique)", "Toutes les Pièces (Vue Globale)"], horizontal=True)
         
-        profils_actuels = projet_courant.get("profils_edited", projet_courant["profils"])
-        noms_profils_disponibles = profils_actuels['Nom'].dropna().replace("", pd.NA).dropna().unique().tolist() if "Nom" in profils_actuels.columns and not profils_actuels.empty else ["Aucun profil défini"]
+        # Consolider la liste des profils (Projet + Standards) pour le menu déroulant
+        profils_projet = projet_courant.get("profils_edited", projet_courant["profils"])['Nom'].dropna().unique().tolist()
+        profils_standards = st.session_state.df_standards_base['Nom'].dropna().unique().tolist()
+        tous_les_profils = sorted(list(set(profils_projet + profils_standards)))
 
-        df_liste_active = projet_courant["listes"][st.session_state.liste_active]
-        if "listes_edited" not in projet_courant: projet_courant["listes_edited"] = {}
+        if mode_vue == "Vue par Liste (Classique)":
+            c1, c2 = st.columns([1, 1])
+            with c1:
+                liste_choisie = st.selectbox("📂 Liste active :", noms_listes, index=noms_listes.index(st.session_state.liste_active) if st.session_state.liste_active in noms_listes else 0)
+                if liste_choisie != st.session_state.liste_active:
+                    st.session_state.liste_active = liste_choisie
+                    st.rerun()
+            with c2:
+                with st.expander("➕ Créer une nouvelle liste"):
+                    nouvelle_liste = st.text_input("Nom")
+                    if st.button("Ajouter") and nouvelle_liste:
+                        projet_courant["listes"][nouvelle_liste] = db.formater_df_listes(pd.DataFrame())
+                        st.session_state.liste_active = nouvelle_liste
+                        st.rerun()
+
+            df_liste_active = projet_courant.get("listes_edited", {}).get(st.session_state.liste_active, projet_courant["listes"][st.session_state.liste_active])
+            if "listes_edited" not in projet_courant: projet_courant["listes_edited"] = {}
+                
+            projet_courant["listes_edited"][st.session_state.liste_active] = st.data_editor(
+                df_liste_active, num_rows="dynamic", use_container_width=True, key=f"editor_list_{st.session_state.projet_actif}_{st.session_state.liste_active}", hide_index=True,
+                column_config={
+                    "Référence": st.column_config.TextColumn(required=True),
+                    "Profil": st.column_config.SelectboxColumn("Profil", options=tous_les_profils, required=True),
+                    "Coupe sur Section": st.column_config.SelectboxColumn("Section", options=["A", "B"], required=True)
+                }
+            )
+
+        else:
+            st.info("💡 Tu peux changer la colonne 'Nom de la Liste' d'une pièce pour la déplacer, puis clique sur Valider.")
+            frames_globales = []
+            for l_name, df_l in projet_courant["listes"].items():
+                df_temp = projet_courant.get("listes_edited", {}).get(l_name, df_l).copy()
+                df_temp.insert(0, "Nom de la Liste", l_name)
+                frames_globales.append(df_temp)
+                
+            df_global_view = pd.concat(frames_globales, ignore_index=True) if frames_globales else pd.DataFrame(columns=["Nom de la Liste"] + db.COL_LISTES)
             
-        projet_courant["listes_edited"][st.session_state.liste_active] = st.data_editor(
-            df_liste_active, num_rows="dynamic", use_container_width=True, key=f"editor_list_{st.session_state.projet_actif}_{st.session_state.liste_active}", hide_index=True,
-            column_config={
-                "Référence": st.column_config.TextColumn(required=True),
-                "Profil": st.column_config.SelectboxColumn("Profil", options=noms_profils_disponibles, required=True),
-            }
-        )
+            df_global_edited = st.data_editor(
+                df_global_view, num_rows="dynamic", use_container_width=True, key=f"editor_global_{st.session_state.projet_actif}", hide_index=True,
+                column_config={
+                    "Nom de la Liste": st.column_config.SelectboxColumn("Nom de la Liste", options=noms_listes, required=True),
+                    "Profil": st.column_config.SelectboxColumn("Profil", options=tous_les_profils, required=True),
+                    "Coupe sur Section": st.column_config.SelectboxColumn("Section", options=["A", "B"], required=True)
+                }
+            )
+            
+            if st.button("✅ Valider les déplacements inter-listes", type="primary"):
+                nouvelles_listes = {}
+                for l_name in noms_listes: # S'assurer que les listes vides ne sont pas effacées
+                    df_filtre = df_global_edited[df_global_edited["Nom de la Liste"] == l_name].drop(columns=["Nom de la Liste"])
+                    nouvelles_listes[l_name] = df_filtre
+                projet_courant["listes_edited"] = nouvelles_listes
+                st.success("Modifications répercutées avec succès !")
+                st.rerun()
 
 with tab4:
     st.subheader(f"Plans de coupe et Commandes du projet : {st.session_state.projet_actif}")
     
-    noms_toutes_listes = list(projet_courant["listes"].keys())
-    listes_a_optimiser = st.multiselect(
-        "Sélectionnez la ou les liste(s) à produire :", 
-        options=noms_toutes_listes, 
-        default=noms_toutes_listes,
-        help="Vous pouvez décocher les listes que vous ne voulez pas optimiser pour l'instant."
-    )
+    listes_a_optimiser = st.multiselect("Sélectionnez la ou les liste(s) à produire :", options=noms_listes, default=noms_listes)
     
     if st.button("🚀 Lancer l'optimisation", type="primary"):
         if not listes_a_optimiser:
@@ -208,14 +234,10 @@ with tab4:
                     st.info("Aucune pièce à optimiser dans ces listes.")
                 else:
                     profils_a_utiliser = projet_courant.get("profils_edited", projet_courant["profils"])
-                    
-                    # APPEL À L'OPTIMISEUR (Délégué à optimizer.py)
                     resultats = opt.optimiser_projet_complet(df_pieces_global, profils_a_utiliser, epaisseur_lame)
                     
                     if not resultats:
-                        st.warning("⚠️ L'optimisation n'a rien pu calculer. Voici ce qu'il manque :")
-                        st.info("1. Avez-vous bien renseigné la **Longueur de Barre** dans l'onglet 2 ?\n"
-                                "2. Les noms des profils dans vos listes sont-ils **exactement les mêmes** que ceux de l'onglet 2 ?")
+                        st.warning("⚠️ L'optimisation n'a rien pu calculer. Avez-vous bien renseigné la Longueur de Barre dans l'onglet 2 ?")
                     else:
                         total_longueur_pieces = 0
                         total_longueur_barres = 0
@@ -226,7 +248,6 @@ with tab4:
                                 nb_barres = len(profil_res["barres"])
                                 perimetre = profil_res.get("longueur_peinture", 0)
                                 longueur_barre = profil_res.get("longueur_barre_standard", 0)
-                                
                                 total_surface_peinture += (perimetre * longueur_barre * nb_barres) / 1000000.0
                                 
                                 for b in profil_res["barres"]:
@@ -237,33 +258,27 @@ with tab4:
                         if total_longueur_barres > 0:
                             rendement = (total_longueur_pieces / total_longueur_barres) * 100
                             col1, col2, col3, col4 = st.columns(4)
-                            col1.metric("Matière Consommée", f"{total_longueur_barres / 1000:.2f} mètres")
-                            col2.metric("Matière Utile (Pièces)", f"{total_longueur_pieces / 1000:.2f} mètres")
-                            col3.metric("Rendement", f"{rendement:.1f} %", f"-{100-rendement:.1f} % de chute", delta_color="inverse")
+                            col1.metric("Matière Consommée", f"{total_longueur_barres / 1000:.2f} m")
+                            col2.metric("Matière Utile (Pièces)", f"{total_longueur_pieces / 1000:.2f} m")
+                            col3.metric("Rendement", f"{rendement:.1f} %", f"-{100-rendement:.1f} % chute", delta_color="inverse")
                             col4.metric("Surface à Peindre", f"{total_surface_peinture:.2f} m²")
                             st.divider()
 
                         for nom_profil, resultat in resultats.items():
                             st.markdown(f"### 🔹 Profil : {nom_profil}")
-                            if resultat == "LONGUEUR_MANQUANTE": 
-                                st.error("❌ Longueur de barre standard manquante pour ce profil. Allez dans l'onglet 2 pour définir la longueur des barres d'approvisionnement.")
-                            elif resultat == "ERREUR_TAILLE": 
-                                st.error("❌ Impossible : Vous avez demandé une pièce qui est plus longue que la barre standard que vous avez définie !")
-                            elif resultat == "ECHEC": 
-                                st.error("❌ Échec inattendu de l'optimiseur.")
-                            elif type(resultat) == dict and resultat["statut"] == "SUCCES":
+                            if type(resultat) == str: 
+                                st.error(f"❌ Erreur sur ce profil : {resultat}")
+                            else:
                                 surface_profil = (resultat.get('longueur_peinture', 0) * resultat.get('longueur_barre_standard', 0) * len(resultat['barres'])) / 1000000.0
                                 st.success(f"📦 À commander : {len(resultat['barres'])} barre(s) de {resultat['barres'][0]['barre_longueur']} mm.  *(Surface de peinture : {surface_profil:.2f} m²)*")
                                 
                                 for idx, barre in enumerate(resultat["barres"]):
-                                    with st.expander(f"Barre {idx+1} (Longueur: {barre['barre_longueur']} mm) - Chute : {barre['chute']:.1f} mm", expanded=True):
-                                        # APPEL AU RENDU GRAPHIQUE (Délégué à drawing.py)
+                                    with st.expander(f"Barre {idx+1} - Chute : {barre['chute']:.1f} mm", expanded=True):
                                         st.pyplot(draw.dessiner_barre(barre, epaisseur_lame, resultat["largeur"], SEUIL_CHUTE), use_container_width=True)
                                 
                                 chutes_utiles = [b['chute'] for b in resultat["barres"] if b['chute'] >= SEUIL_CHUTE]
                                 if chutes_utiles:
                                     chutes_utiles.sort(reverse=True)
                                     texte_chutes = ", ".join([f"{c:.1f} mm" for c in chutes_utiles])
-                                    st.info(f"♻️ **Bilan des chutes réutilisables (>300 mm) :** Vous générerez **{len(chutes_utiles)} chute(s)** à conserver en stock ({texte_chutes}).")
-                                        
+                                    st.info(f"♻️ Vous générerez **{len(chutes_utiles)} chute(s)** à conserver (>300mm) : {texte_chutes}.")
                             st.divider()
