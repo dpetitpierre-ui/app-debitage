@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt # Ajout vital pour purger la mémoire
+import matplotlib
+matplotlib.use('Agg') # BOLIUIER 1 : Force le mode serveur sans interface graphique (Anti-Crash Linux)
+import matplotlib.pyplot as plt
 from io import BytesIO
 
 import database as db
@@ -18,6 +20,29 @@ EPAISSEUR_LAME = 4.0   # Fixé en dur pour éviter les erreurs de saisie
 CHUTE_MINIMUM = 30.0   # Mors de serrage obligatoire en fin de barre
 
 # -----------------------------------------------------------------------------
+# BOUCLIER 2 : FONCTIONS D'URL SÉCURISÉES (Compatibles toutes versions Streamlit)
+# -----------------------------------------------------------------------------
+def get_projet_url():
+    try:
+        if hasattr(st, 'query_params'):
+            return st.query_params.get("projet")
+        elif hasattr(st, 'experimental_get_query_params'):
+            params = st.experimental_get_query_params()
+            return params.get("projet", [None])[0]
+    except:
+        pass
+    return None
+
+def set_projet_url(nom):
+    try:
+        if hasattr(st, 'query_params'):
+            st.query_params["projet"] = nom
+        elif hasattr(st, 'experimental_set_query_params'):
+            st.experimental_set_query_params(projet=nom)
+    except:
+        pass
+
+# -----------------------------------------------------------------------------
 # CHARGEMENT DEPUIS SUPABASE ET GESTION DE LA MÉMOIRE (URL)
 # -----------------------------------------------------------------------------
 if 'workspace' not in st.session_state:
@@ -29,14 +54,14 @@ if 'workspace' not in st.session_state:
         
         liste_projets = list(workspace.keys())
         
-        # Mémoire individuelle via l'URL
-        projet_en_url = st.query_params.get("projet")
+        # Mémoire individuelle via l'URL (Sécurisée)
+        projet_en_url = get_projet_url()
         if projet_en_url and projet_en_url in liste_projets:
             st.session_state.projet_actif = projet_en_url
         else:
             st.session_state.projet_actif = liste_projets[0]
             
-        st.query_params["projet"] = st.session_state.projet_actif
+        set_projet_url(st.session_state.projet_actif)
         
         st.session_state.liste_active = list(workspace[st.session_state.projet_actif]["listes"].keys())[0] if workspace[st.session_state.projet_actif]["listes"] else None
         st.toast("✅ Base de données connectée", icon="☁️")
@@ -52,7 +77,7 @@ with st.sidebar:
     
     if projet_choisi != st.session_state.projet_actif:
         st.session_state.projet_actif = projet_choisi
-        st.query_params["projet"] = projet_choisi 
+        set_projet_url(projet_choisi) 
         st.session_state.liste_active = list(st.session_state.workspace[projet_choisi]["listes"].keys())[0] if st.session_state.workspace[projet_choisi]["listes"] else None
         st.rerun()
 
@@ -62,7 +87,7 @@ with st.sidebar:
             if nouveau_projet not in st.session_state.workspace:
                 st.session_state.workspace[nouveau_projet] = {"profils": db.formater_df_profils(pd.DataFrame()), "listes": {"Liste 1": db.formater_df_listes(pd.DataFrame())}}
                 st.session_state.projet_actif = nouveau_projet
-                st.query_params["projet"] = nouveau_projet 
+                set_projet_url(nouveau_projet) 
                 st.session_state.liste_active = "Liste 1"
                 st.rerun()
             else:
