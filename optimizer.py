@@ -2,12 +2,11 @@ import pandas as pd
 from ortools.sat.python import cp_model
 import math
 
-# --- MODIFICATION CTO : Ajout de la chute_minimum dans l'équation ---
 def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame, chute_minimum=30.0):
     """
-    Algorithme v2 (Scalable).
-    Intègre une contrainte inviolable : chaque barre utilisée DOIT 
-    conserver une chute_minimum pour la prise machine (mors de serrage).
+    Algorithme v3 (Hybride & Indestructible).
+    Combine une heuristique ultra-rapide (FFD) pour les gros volumes,
+    et l'IA (CP-SAT) pour affiner les petits volumes.
     """
     resultats_finaux = {}
     
@@ -38,7 +37,6 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame, chute_minimu
             
         items_grouped = []
         qte_totale_pieces = 0
-        longueur_totale_pieces = 0
         
         for idx, row in pieces_du_profil.iterrows():
             qte = int(row['Quantité'])
@@ -55,7 +53,6 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame, chute_minimu
                 'qte': qte
             })
             qte_totale_pieces += qte
-            longueur_totale_pieces += (L + epaisseur_lame) * qte
 
         if not items_grouped:
             continue
@@ -64,18 +61,82 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame, chute_minimu
             resultats_finaux[nom_profil] = "LONGUEUR_MANQUANTE"
             continue
             
-        # --- MODIFICATION CTO : Bouclier anti-impossibilité ---
-        # Si une seule pièce fait 6000mm sur une barre de 6000, 
-        # elle ne rentrera pas à cause du mors de 30mm.
+        # Bouclier anti-impossibilité (Chute minimum incluse)
         if any(item['longueur'] > longueur_barre_standard - chute_minimum for item in items_grouped):
             resultats_finaux[nom_profil] = "ERREUR_TAILLE"
             continue
 
-        items_grouped.sort(key=lambda item: item['longueur'], reverse=True)
-
-        borne_sup_barres = int(math.ceil(longueur_totale_pieces / longueur_barre_standard) * 1.2) + 2
-        borne_sup_barres = min(borne_sup_barres, qte_totale_pieces) 
+        # =========================================================================
+        # PHASE 1 : MOTEUR HEURISTIQUE (FIRST FIT DECREASING) - SPÉCIAL GROS VOLUMES
+        # =========================================================================
+        # On "déplie" les pièces pour l'algorithme rapide
+        pieces_individuelles = []
+        for item in items_grouped:
+            for _ in range(item['qte']):
+                pieces_individuelles.append(item.copy())
         
+        # Tri des pièces de la plus grande à la plus petite (stratégie FFD)
+        pieces_individuelles.sort(key=lambda x: x['longueur'], reverse=True)
+        
+        barres_ffd = []
+        espace_initial = longueur_barre_standard - chute_minimum + epaisseur_lame
+        
+        for piece in pieces_individuelles:
+            longueur_requise = piece['longueur'] + epaisseur_lame
+            place_trouvee = False
+            
+            # On cherche la première barre qui a assez de place
+            for barre in barres_ffd:
+                if barre['espace_dispo'] >= longueur_requise:
+                    barre['pieces'].append(piece)
+                    barre['espace_dispo'] -= longueur_requise
+                    place_trouvee = True
+                    break
+                    
+            # Si aucune barre n'a de place, on en ouvre une nouvelle
+            if not place_trouvee:
+                nouvelle_barre = {
+                    'barre_longueur': longueur_barre_standard,
+                    'espace_dispo': espace_initial - longueur_requise,
+                    'pieces': [piece]
+                }
+                barres_ffd.append(nouvelle_barre)
+
+        # Formatage du résultat de l'heuristique
+        resultats_barres_ffd = []
+        for b in barres_ffd:
+            longueur_utilisee = sum(p['longueur'] + epaisseur_lame for p in b['pieces']) - epaisseur_lame
+            chute_reelle = b['barre_longueur'] - longueur_utilisee
+            resultats_barres_ffd.append({
+                'barre_longueur': b['barre_longueur'],
+                'pieces': b['pieces'],
+                'chute': chute_reelle
+            })
+
+        # =========================================================================
+        # AIGUILLAGE INTELLIGENT (CTO MODE)
+        # =========================================================================
+        # Si on a plus de 200 pièces pour ce profil, l'IA va exploser ou timeout.
+        # On renvoie directement le résultat FFD (qui est ultra-proche de l'optimum).
+        if qte_totale_pieces > 200:
+            resultats_finaux[nom_profil] = {
+                "statut": "SUCCES", 
+                "barres": resultats_barres_ffd, 
+                "section_a": sec_a,
+                "section_b": sec_b, 
+                "longueur_peinture": longueur_peinture,
+                "longueur_barre_standard": longueur_barre_standard
+            }
+            continue
+
+        # =========================================================================
+        # PHASE 2 : MOTEUR IA EXACT (CP-SAT) POUR AFFINER LES PETITES SÉRIES
+        # =========================================================================
+        # Tri des groupes pour aider l'IA
+        items_grouped.sort(key=lambda item: item['longueur'], reverse=True)
+        
+        # Grâce au FFD, on sait exactement combien de barres on a besoin au pire.
+        borne_sup_barres = len(barres_ffd)
         barres_liste = [{'id': nom_profil, 'longueur': longueur_barre_standard} for _ in range(borne_sup_barres)]
 
         model = cp_model.CpModel()
@@ -96,14 +157,11 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame, chute_minimu
             model.Add(y[j] <= y[j-1])
 
         lame = int(epaisseur_lame * 10)
-        chute_min_int = int(chute_minimum * 10) # Précision au dixième de millimètre
+        chute_min_int = int(chute_minimum * 10) 
         
         for j in range(len(barres_liste)):
             capacite = int(barres_liste[j]['longueur'] * 10)
             somme_longueurs = sum((int(items_grouped[i]['longueur'] * 10) + lame) * x[i, j] for i in range(len(items_grouped)))
-            
-            # --- CŒUR DE LA MODIFICATION CTO ---
-            # La "capacité" d'une barre est virtuellement amputée de la chute_minimum.
             model.Add(somme_longueurs <= (capacite - chute_min_int + lame) * y[j])
 
         poids_lourd_barre = max(10000, qte_totale_pieces * len(barres_liste) + 100)
@@ -116,11 +174,12 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame, chute_minimu
         model.Minimize(sum(termes_objectif))
         
         solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = 15.0
+        # Timeout réduit car on a un excellent filet de sécurité (FFD)
+        solver.parameters.max_time_in_seconds = 8.0 
         status = solver.Solve(model)
 
         if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
-            resultats_barres = []
+            resultats_barres_cp = []
             for j in range(len(barres_liste)):
                 if solver.Value(y[j]):
                     pieces_barre = []
@@ -135,17 +194,31 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame, chute_minimu
                     longueur_utilisee -= epaisseur_lame 
                     chute_reelle = barres_liste[j]['longueur'] - longueur_utilisee
                     
-                    resultats_barres.append({'barre_longueur': barres_liste[j]['longueur'], 'pieces': pieces_barre, 'chute': chute_reelle})
+                    resultats_barres_cp.append({'barre_longueur': barres_liste[j]['longueur'], 'pieces': pieces_barre, 'chute': chute_reelle})
             
+            # Vérification finale : Si l'IA n'a pas fait mieux que le FFD, on garde le FFD !
+            if len(resultats_barres_cp) <= len(resultats_barres_ffd):
+                meilleures_barres = resultats_barres_cp
+            else:
+                meilleures_barres = resultats_barres_ffd
+                
             resultats_finaux[nom_profil] = {
                 "statut": "SUCCES", 
-                "barres": resultats_barres, 
+                "barres": meilleures_barres, 
                 "section_a": sec_a,
                 "section_b": sec_b, 
                 "longueur_peinture": longueur_peinture,
                 "longueur_barre_standard": longueur_barre_standard
             }
         else:
-            resultats_finaux[nom_profil] = "ECHEC"
+            # Si l'IA échoue sans solution, le FFD prend le relais en douceur !
+            resultats_finaux[nom_profil] = {
+                "statut": "SUCCES", 
+                "barres": resultats_barres_ffd, 
+                "section_a": sec_a,
+                "section_b": sec_b, 
+                "longueur_peinture": longueur_peinture,
+                "longueur_barre_standard": longueur_barre_standard
+            }
 
     return resultats_finaux
