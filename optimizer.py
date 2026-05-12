@@ -20,11 +20,18 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
 
     for index, profil in df_profils.iterrows():
         nom_profil = profil['Nom']
-        largeur_profil = profil.get('Section A (mm)', 50.0) 
+        
+        # --- MODIFICATION CTO : Récupération des deux sections ---
+        sec_a = profil.get('Section A (mm)', 50.0)
+        sec_b = profil.get('Section B (mm)', 50.0)
+        
+        # Sécurité anti-bug (si la cellule est vide dans Excel/Supabase)
+        if pd.isna(sec_a) or sec_a <= 0: sec_a = 50.0
+        if pd.isna(sec_b) or sec_b <= 0: sec_b = sec_a
+        
         longueur_barre_standard = profil.get('Longueur Barre (mm)', 0)
         longueur_peinture = profil.get('Longueur Peinture (mm)', 0)
         
-        if pd.isna(largeur_profil): largeur_profil = 50.0
         if pd.isna(longueur_peinture): longueur_peinture = 0.0
         
         pieces_du_profil = df_pieces[df_pieces['Profil'] == nom_profil]
@@ -124,7 +131,8 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
             resultats_finaux[nom_profil] = {
                 "statut": "SUCCES", 
                 "barres": resultats_barres, 
-                "largeur": largeur_profil,
+                "section_a": sec_a, # <-- Transmission des sections A et B
+                "section_b": sec_b, 
                 "longueur_peinture": longueur_peinture,
                 "longueur_barre_standard": longueur_barre_standard
             }
