@@ -1,13 +1,9 @@
 import requests
 import pandas as pd
-import streamlit as st
 
 # -----------------------------------------------------------------------------
 # CONFIGURATION SUPABASE
 # -----------------------------------------------------------------------------
-# Note du CTO : À terme, nous mettrons ces clés dans les secrets de Streamlit 
-# (.streamlit/secrets.toml) pour qu'elles n'apparaissent pas dans le code source. 
-# Pour l'instant, on les garde ici pour que ça fonctionne immédiatement.
 SUPABASE_URL = "https://wlonolzfkhlyxbojprus.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indsb25vbHpma2hseXhib2pwcnVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQyMjY2ODEsImV4cCI6MjA3OTgwMjY4MX0.FwA0c6iwp3sYfI4zEj7xOK_wJKywA3QKmhY5CVM2XHU"
 
@@ -18,14 +14,15 @@ HEADERS = {
 }
 
 # -----------------------------------------------------------------------------
-# DÉFINITION GLOBALE DES COLONNES (Single Source of Truth)
+# DÉFINITION GLOBALE DES COLONNES
 # -----------------------------------------------------------------------------
 COL_STANDARDS = ["Matériau", "Nom", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)"]
 COL_PROFILS = ["Nom", "Longueur Barre (mm)", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)", "Couleur", "Longueur Peinture (mm)"]
-COL_LISTES = ["Référence", "Profil", "Longueur (mm)", "Quantité", "Angle Gauche (°)", "Angle Droite (°)", "Symétrique"]
+# AJOUT : "Coupe sur Section"
+COL_LISTES = ["Référence", "Profil", "Longueur (mm)", "Quantité", "Coupe sur Section", "Angle Gauche (°)", "Angle Droite (°)", "Symétrique"]
 
 # -----------------------------------------------------------------------------
-# FONCTIONS UTILITAIRES INTERNES (Ne sont pas appelées par app.py directement)
+# FONCTIONS UTILITAIRES INTERNES
 # -----------------------------------------------------------------------------
 def _requete_get(table):
     r = requests.get(f"{SUPABASE_URL}/rest/v1/{table}", headers=HEADERS)
@@ -84,31 +81,29 @@ def formater_df_listes(df):
     df["Profil"] = df["Profil"].fillna("").astype(str)
     df["Longueur (mm)"] = pd.to_numeric(df["Longueur (mm)"], errors='coerce')
     df["Quantité"] = pd.to_numeric(df["Quantité"], errors='coerce').astype('Int64')
+    df["Coupe sur Section"] = df["Coupe sur Section"].fillna("A").astype(str) # NOUVEAU
     df["Angle Gauche (°)"] = pd.to_numeric(df["Angle Gauche (°)"], errors='coerce')
     df["Angle Droite (°)"] = pd.to_numeric(df["Angle Droite (°)"], errors='coerce')
     df["Symétrique"] = df["Symétrique"].fillna(False).astype(bool)
     return df
 
 # -----------------------------------------------------------------------------
-# L'API PUBLIQUE DU MODULE (Les fonctions que app.py a le droit d'appeler)
+# L'API PUBLIQUE DU MODULE
 # -----------------------------------------------------------------------------
 
 def charger_donnees_initiales():
-    """Charge toute la base de données au démarrage de l'app."""
     try:
         db_standards = _requete_get("gp_debit_standards")
         db_projets = _requete_get("gp_debit_projets")
         db_profils = _requete_get("gp_debit_profils")
         db_pieces = _requete_get("gp_debit_pieces")
         
-        # 1. Construction des standards
         if db_standards:
             std_data = [{"Matériau": r.get("materiau", ""), "Nom": r["nom_profil"], "Section A (mm)": r.get("section_a"), "Section B (mm)": r.get("section_b"), "Épaisseur (mm)": r.get("epaisseur"), "Poids (kg/m)": r.get("poids_ml")} for r in db_standards]
             df_standards_base = formater_df_standards(pd.DataFrame(std_data))
         else:
             df_standards_base = pd.DataFrame(columns=COL_STANDARDS)
             
-        # 2. Construction du Workspace (Projets)
         workspace = {}
         if db_projets:
             for proj in db_projets:
@@ -119,7 +114,7 @@ def charger_donnees_initiales():
                 listes_dict = {}
                 
                 if pieces_p:
-                    df_pieces_temp = pd.DataFrame([{"Nom de Liste": pc["nom_liste"], "Référence": pc["reference"], "Profil": pc["profil"], "Longueur (mm)": pc["longueur"], "Quantité": pc["quantite"], "Angle Gauche (°)": pc["angle_g"], "Angle Droite (°)": pc["angle_d"], "Symétrique": pc["symetrique"]} for pc in pieces_p])
+                    df_pieces_temp = pd.DataFrame([{"Nom de Liste": pc["nom_liste"], "Référence": pc["reference"], "Profil": pc["profil"], "Longueur (mm)": pc["longueur"], "Quantité": pc["quantite"], "Coupe sur Section": pc.get("coupe_section", "A"), "Angle Gauche (°)": pc["angle_g"], "Angle Droite (°)": pc["angle_d"], "Symétrique": pc["symetrique"]} for pc in pieces_p])
                     for nom_l in df_pieces_temp["Nom de Liste"].unique():
                         listes_dict[nom_l] = formater_df_listes(df_pieces_temp[df_pieces_temp["Nom de Liste"] == nom_l])
                 else:
@@ -131,11 +126,9 @@ def charger_donnees_initiales():
                 }
             return df_standards_base, workspace
         else:
-            raise Exception("Aucun projet trouvé dans la base.")
+            raise Exception("Aucun projet trouvé.")
             
     except Exception as e:
-        # Fallback en cas de base vide ou d'erreur réseau majeure
-        print(f"Erreur chargement DB : {e}")
         df_standards_base = formater_df_standards(pd.DataFrame([{"Matériau": "ACIER", "Nom": "Tube 50x50", "Section A (mm)": 50.0, "Section B (mm)": 50.0, "Épaisseur (mm)": 2.0, "Poids (kg/m)": None}]))
         workspace = {
             "Nouveau Projet": {
@@ -146,12 +139,6 @@ def charger_donnees_initiales():
         return df_standards_base, workspace
 
 def sauvegarder_projet(nom_projet, df_profils, dict_listes):
-    """
-    Sauvegarde complète d'un projet.
-    Le "Bouclier" du CTO : On prépare toutes les données D'ABORD. 
-    Si ça plante ici (ex: mauvaise saisie), la base de données n'est pas touchée.
-    """
-    # 1. Préparation des Profils
     insert_profils = []
     for _, r in df_profils.iterrows():
         nom_profil = str(r["Nom"]).strip()
@@ -167,7 +154,6 @@ def sauvegarder_projet(nom_projet, df_profils, dict_listes):
                 "longueur_peinture": float(r["Longueur Peinture (mm)"]) if pd.notna(r["Longueur Peinture (mm)"]) else None
             })
 
-    # 2. Préparation des Pièces
     insert_pieces = []
     pieces_ignorees = []
     for l_name, df_liste in dict_listes.items():
@@ -179,6 +165,7 @@ def sauvegarder_projet(nom_projet, df_profils, dict_listes):
                     "profil": str(r["Profil"]).strip() if pd.notna(r["Profil"]) else "",
                     "longueur": float(r["Longueur (mm)"]) if pd.notna(r["Longueur (mm)"]) else 0, 
                     "quantite": int(r["Quantité"]) if pd.notna(r["Quantité"]) else 0,
+                    "coupe_section": str(r.get("Coupe sur Section", "A")), # NOUVEAU
                     "angle_g": float(r["Angle Gauche (°)"]) if pd.notna(r["Angle Gauche (°)"]) else 90, 
                     "angle_d": float(r["Angle Droite (°)"]) if pd.notna(r["Angle Droite (°)"]) else 90,
                     "symetrique": bool(r["Symétrique"])
@@ -186,7 +173,6 @@ def sauvegarder_projet(nom_projet, df_profils, dict_listes):
             elif pd.notna(r["Longueur (mm)"]) or pd.notna(r["Quantité"]):
                 pieces_ignorees.append(l_name)
 
-    # 3. Exécution sécurisée (Si le code arrive ici, les données sont propres)
     url_proj = f"{SUPABASE_URL}/rest/v1/gp_debit_projets"
     r_proj = requests.post(url_proj, headers={**HEADERS, "Prefer": "resolution=merge-duplicates"}, params={"on_conflict":"nom_projet"}, json=[{"nom_projet": nom_projet}])
     if r_proj.status_code not in [200, 201]: raise Exception(f"Erreur table projets : {r_proj.text}")
@@ -195,12 +181,24 @@ def sauvegarder_projet(nom_projet, df_profils, dict_listes):
     if insert_profils: _requete_insert("gp_debit_profils", insert_profils)
 
     _requete_delete("gp_debit_pieces", "nom_projet", nom_projet)
-    if insert_pieces: _requete_insert("gp_debit_pieces", insert_pieces)
+    
+    # BOUCLIER CTO : Rétrocompatibilité avec Supabase
+    if insert_pieces:
+        try:
+            _requete_insert("gp_debit_pieces", insert_pieces)
+        except Exception as e:
+            if "coupe_section" in str(e).lower():
+                # La colonne manque dans Supabase, on la retire à la volée et on réessaie
+                for p in insert_pieces:
+                    p.pop("coupe_section", None)
+                _requete_insert("gp_debit_pieces", insert_pieces)
+                raise Exception("WARNING_COLONNE_MANQUANTE")
+            else:
+                raise e
 
-    return pieces_ignorees # On retourne l'info pour que l'app puisse afficher un "warning" si besoin
+    return pieces_ignorees
 
 def sauvegarder_standards(df_standards):
-    """Remplace entièrement le catalogue des standards par la nouvelle version."""
     insert_std = []
     for _, r in df_standards.iterrows():
         if pd.notna(r["Nom"]) and str(r["Nom"]).strip() != "":
@@ -213,8 +211,6 @@ def sauvegarder_standards(df_standards):
                 "poids_ml": float(r["Poids (kg/m)"]) if pd.notna(r["Poids (kg/m)"]) else None
             })
             
-    # Suppression conditionnelle "not.is.null" (astuce Supabase pour tout supprimer)
     r_del = requests.delete(f"{SUPABASE_URL}/rest/v1/gp_debit_standards?nom_profil=not.is.null", headers=HEADERS)
     if r_del.status_code not in [200, 204]: raise Exception(f"Delete fail: {r_del.text}")
-    
     if insert_std: _requete_insert("gp_debit_standards", insert_std)
