@@ -1,12 +1,10 @@
 import streamlit as st
 import pandas as pd
-from ortools.sat.python import cp_model
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-import math
 
-# IMPORT DE NOTRE NOUVEAU MODULE DE BASE DE DONNÉES
+# IMPORT DE NOS TROIS NOUVEAUX MODULES EXPERTS
 import database as db
+import optimizer as opt
+import drawing as draw
 
 # -----------------------------------------------------------------------------
 # CONFIGURATION DE LA PAGE
@@ -17,7 +15,7 @@ st.set_page_config(page_title="Optimisation de Débitage Pro", page_icon="🪚",
 SEUIL_CHUTE = 300.0 # Chute réutilisable à 30cm minimum
 
 # -----------------------------------------------------------------------------
-# CHARGEMENT DEPUIS SUPABASE (Désormais délégué à database.py)
+# CHARGEMENT DEPUIS SUPABASE (Délégué à database.py)
 # -----------------------------------------------------------------------------
 if 'workspace' not in st.session_state:
     with st.spinner("Connexion à la base de données..."):
@@ -28,163 +26,6 @@ if 'workspace' not in st.session_state:
         st.session_state.projet_actif = list(workspace.keys())[0]
         st.session_state.liste_active = list(workspace[st.session_state.projet_actif]["listes"].keys())[0] if workspace[st.session_state.projet_actif]["listes"] else None
         st.toast("✅ Base de données connectée", icon="☁️")
-
-# -----------------------------------------------------------------------------
-# FONCTION D'OPTIMISATION MATHÉMATIQUE (TASSEMENT MAXIMAL)
-# -----------------------------------------------------------------------------
-def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
-    resultats_finaux = {}
-    
-    df_profils = df_profils.dropna(subset=['Nom', 'Longueur Barre (mm)']).copy()
-    df_profils['Nom'] = df_profils['Nom'].astype(str).str.strip()
-    df_profils = df_profils[df_profils['Nom'] != ""]
-    
-    df_pieces = df_pieces.dropna(subset=['Référence', 'Profil', 'Longueur (mm)', 'Quantité']).copy()
-    df_pieces['Profil'] = df_pieces['Profil'].astype(str).str.strip()
-    df_pieces = df_pieces[df_pieces['Profil'] != ""]
-
-    for index, profil in df_profils.iterrows():
-        nom_profil = profil['Nom']
-        largeur_profil = profil.get('Section A (mm)', 50.0) 
-        longueur_barre_standard = profil.get('Longueur Barre (mm)', 0)
-        longueur_peinture = profil.get('Longueur Peinture (mm)', 0)
-        
-        if pd.isna(largeur_profil): largeur_profil = 50.0
-        if pd.isna(longueur_peinture): longueur_peinture = 0.0
-        
-        pieces_du_profil = df_pieces[df_pieces['Profil'] == nom_profil]
-        if pieces_du_profil.empty: continue 
-            
-        pieces_liste = []
-        for idx, row in pieces_du_profil.iterrows():
-            if row['Quantité'] <= 0 or row['Longueur (mm)'] <= 0: continue
-            for _ in range(int(row['Quantité'])):
-                pieces_liste.append({
-                    'liste': row.get('Nom de la Liste', 'Sans Liste'),
-                    'ref': row.get('Référence', f'P{idx}'), 
-                    'longueur': row['Longueur (mm)'],
-                    'angle_g': row.get('Angle Gauche (°)', 90.0),
-                    'angle_d': row.get('Angle Droite (°)', 90.0)
-                })
-
-        if not pieces_liste:
-            continue
-            
-        if longueur_barre_standard <= 0:
-            resultats_finaux[nom_profil] = "LONGUEUR_MANQUANTE"
-            continue
-            
-        pieces_liste.sort(key=lambda item: item['longueur'], reverse=True)
-
-        qte_barres_a_fournir_ia = len(pieces_liste)
-        barres_liste = [{'id': nom_profil, 'longueur': longueur_barre_standard} for _ in range(qte_barres_a_fournir_ia)]
-
-        if any(p['longueur'] > longueur_barre_standard for p in pieces_liste):
-            resultats_finaux[nom_profil] = "ERREUR_TAILLE"
-            continue
-
-        model = cp_model.CpModel()
-        x = {} 
-        for i in range(len(pieces_liste)):
-            for j in range(len(barres_liste)):
-                x[i, j] = model.NewBoolVar(f'x_{i}_{j}')
-        y = {} 
-        for j in range(len(barres_liste)):
-            y[j] = model.NewBoolVar(f'y_{j}')
-
-        for i in range(len(pieces_liste)):
-            model.AddExactlyOne(x[i, j] for j in range(len(barres_liste)))
-
-        for j in range(1, len(barres_liste)):
-            model.Add(y[j] <= y[j-1])
-
-        lame = int(epaisseur_lame * 10)
-        for j in range(len(barres_liste)):
-            capacite = int(barres_liste[j]['longueur'] * 10)
-            model.Add(sum((int(pieces_liste[i]['longueur'] * 10) + lame) * x[i, j] for i in range(len(pieces_liste))) <= (capacite + lame) * y[j])
-
-        poids_lourd_barre = max(10000, len(pieces_liste) * len(barres_liste) + 100)
-        
-        termes_objectif = []
-        for j in range(len(barres_liste)):
-            termes_objectif.append(y[j] * poids_lourd_barre)
-            for i in range(len(pieces_liste)):
-                termes_objectif.append(x[i, j] * j)
-                
-        model.Minimize(sum(termes_objectif))
-        
-        solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = 10.0
-        status = solver.Solve(model)
-
-        if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
-            resultats_barres = []
-            for j in range(len(barres_liste)):
-                if solver.Value(y[j]):
-                    pieces_barre = []
-                    longueur_utilisee = 0
-                    for i in range(len(pieces_liste)):
-                        if solver.Value(x[i, j]):
-                            pieces_barre.append(pieces_liste[i])
-                            longueur_utilisee += pieces_liste[i]['longueur'] + epaisseur_lame
-                    longueur_utilisee -= epaisseur_lame 
-                    resultats_barres.append({'barre_longueur': barres_liste[j]['longueur'], 'pieces': pieces_barre, 'chute': barres_liste[j]['longueur'] - longueur_utilisee})
-            
-            resultats_finaux[nom_profil] = {
-                "statut": "SUCCES", 
-                "barres": resultats_barres, 
-                "largeur": largeur_profil,
-                "longueur_peinture": longueur_peinture,
-                "longueur_barre_standard": longueur_barre_standard
-            }
-        else:
-            resultats_finaux[nom_profil] = "ECHEC"
-
-    return resultats_finaux
-
-# -----------------------------------------------------------------------------
-# FONCTION DE DESSIN
-# -----------------------------------------------------------------------------
-def dessiner_barre(barre_info, epaisseur_lame, largeur_profil, seuil_chute):
-    fig, ax = plt.subplots(figsize=(20, 0.4)) 
-    longueur_totale = barre_info['barre_longueur']
-    
-    ax.add_patch(patches.Rectangle((0, 0), longueur_totale, largeur_profil, facecolor='#f0f0f0', edgecolor='black'))
-    position_actuelle = 0
-    
-    for p in barre_info['pieces']:
-        L = p['longueur']
-        ang_g, ang_d = p.get('angle_g', 90.0), p.get('angle_d', 90.0)
-        if pd.isna(ang_g): ang_g = 90.0
-        if pd.isna(ang_d): ang_d = 90.0
-        
-        dx_g = largeur_profil / math.tan(math.radians(ang_g)) if ang_g != 90 else 0
-        dx_d = largeur_profil / math.tan(math.radians(ang_d)) if ang_d != 90 else 0
-        
-        x_min, x_max = position_actuelle, position_actuelle + L
-        x_bl, x_tl = x_min + min((dx_g if dx_g > 0 else 0), L), x_min + min((-dx_g if dx_g < 0 else 0), L)
-        x_br, x_tr = x_max - min((dx_d if dx_d > 0 else 0), L), x_max - min((-dx_d if dx_d < 0 else 0), L)
-        
-        ax.add_patch(patches.Polygon([(x_bl, 0), (x_tl, largeur_profil), (x_tr, largeur_profil), (x_br, 0)], closed=True, facecolor='#4CAF50', edgecolor='black', linewidth=1))
-        ax.text(position_actuelle + L/2, largeur_profil/2, f"{p['ref']}\n{L}mm", ha='center', va='center', color='white', fontweight='bold', fontsize=7)
-        position_actuelle += L
-        
-        if position_actuelle + epaisseur_lame <= longueur_totale and position_actuelle < longueur_totale:
-            ax.add_patch(patches.Rectangle((position_actuelle, 0), epaisseur_lame, largeur_profil, facecolor='#F44336', edgecolor='none'))
-            position_actuelle += epaisseur_lame
-            
-    if position_actuelle < longueur_totale:
-        chute = longueur_totale - position_actuelle
-        est_reutilisable = chute >= seuil_chute
-        ax.add_patch(patches.Rectangle((position_actuelle, 0), chute, largeur_profil, facecolor='#C8E6C9' if est_reutilisable else '#9E9E9E', edgecolor='black', hatch='' if est_reutilisable else '//'))
-        ax.text(position_actuelle + chute/2, largeur_profil/2, f"♻️ Chute\n{chute:.1f} mm" if est_reutilisable else f"Déchet\n{chute:.1f} mm", ha='center', va='center', color='black', fontweight='bold' if est_reutilisable else 'normal', fontsize=7)
-        
-    ax.set_xlim(0, longueur_totale)
-    ax.set_ylim(0, largeur_profil * 1.05)
-    ax.axis('off')
-    
-    fig.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0, hspace=0)
-    return fig
 
 # -----------------------------------------------------------------------------
 # MENU LATÉRAL
@@ -226,7 +67,7 @@ with st.sidebar:
                 for l_name, l_base in projet_courant["listes"].items():
                     dict_listes[l_name] = projet_courant.get("listes_edited", {}).get(l_name, l_base)
                 
-                # Appel au nouveau module de base de données
+                # Appel au module de base de données
                 pieces_ignorees = db.sauvegarder_projet(nom_p, df_prof, dict_listes)
                 
                 if pieces_ignorees:
@@ -368,8 +209,8 @@ with tab4:
                 else:
                     profils_a_utiliser = projet_courant.get("profils_edited", projet_courant["profils"])
                     
-                    # APPEL À L'OPTIMISEUR (Reste intact pour l'instant)
-                    resultats = optimiser_projet_complet(df_pieces_global, profils_a_utiliser, epaisseur_lame)
+                    # APPEL À L'OPTIMISEUR (Délégué à optimizer.py)
+                    resultats = opt.optimiser_projet_complet(df_pieces_global, profils_a_utiliser, epaisseur_lame)
                     
                     if not resultats:
                         st.warning("⚠️ L'optimisation n'a rien pu calculer. Voici ce qu'il manque :")
@@ -416,7 +257,8 @@ with tab4:
                                 
                                 for idx, barre in enumerate(resultat["barres"]):
                                     with st.expander(f"Barre {idx+1} (Longueur: {barre['barre_longueur']} mm) - Chute : {barre['chute']:.1f} mm", expanded=True):
-                                        st.pyplot(dessiner_barre(barre, epaisseur_lame, resultat["largeur"], SEUIL_CHUTE), use_container_width=True)
+                                        # APPEL AU RENDU GRAPHIQUE (Délégué à drawing.py)
+                                        st.pyplot(draw.dessiner_barre(barre, epaisseur_lame, resultat["largeur"], SEUIL_CHUTE), use_container_width=True)
                                 
                                 chutes_utiles = [b['chute'] for b in resultat["barres"] if b['chute'] >= SEUIL_CHUTE]
                                 if chutes_utiles:
