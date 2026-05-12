@@ -109,7 +109,7 @@ with tab1:
         st.subheader("Catalogue des Profils Standards (Commun)")
     with col2:
         with st.expander("📥 Importer depuis Excel"):
-            st.info("Colonnes requises : Matériau, Nom, Section A (mm), Section B (mm), Épaisseur (mm), Poids (kg/m)")
+            st.info("Colonnes requises : Matériau, Nom, Longueur Barre (mm), Section A (mm), Section B (mm), Épaisseur (mm), Poids (kg/m)")
             fichier_std = st.file_uploader("Fichier Standards (.xlsx)", type=["xlsx", "xls"], key="import_std")
             if fichier_std and st.button("Ajouter à la base"):
                 try:
@@ -126,6 +126,7 @@ with tab1:
         column_config={
             "Matériau": st.column_config.SelectboxColumn("Matériau", options=["ALUMINIUM", "ACIER", "INOX"], required=True),
             "Nom": st.column_config.TextColumn("Nom", required=True),
+            "Longueur Barre (mm)": st.column_config.NumberColumn("Longueur Barre (mm)"),
             "Section A (mm)": st.column_config.NumberColumn("Section A (mm)", required=True),
             "Section B (mm)": st.column_config.NumberColumn("Section B (mm)", required=True)
         }
@@ -148,7 +149,11 @@ with tab1:
                     st.session_state.df_standards_base = st.session_state.df_standards_edited
                     st.toast("Standards sauvegardés", icon="✅")
                 except Exception as e:
-                    st.error(f"Erreur Standards : {e}")
+                    if str(e) == "WARNING_COLONNE_MANQUANTE_STD":
+                        st.warning("⚠️ Standards sauvegardés, MAIS la colonne 'longueur_barre' n'existe pas dans la table 'gp_debit_standards' sur Supabase.")
+                        st.session_state.df_standards_base = st.session_state.df_standards_edited
+                    else:
+                        st.error(f"Erreur Standards : {e}")
 
 with tab2:
     st.subheader(f"Profils (Barres d'approvisionnement) : {st.session_state.projet_actif}")
