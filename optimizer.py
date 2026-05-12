@@ -30,7 +30,6 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
         pieces_du_profil = df_pieces[df_pieces['Profil'] == nom_profil]
         if pieces_du_profil.empty: continue 
             
-        # NOUVELLE LOGIQUE: On garde les pièces groupées par "lot"
         items_grouped = []
         qte_totale_pieces = 0
         longueur_totale_pieces = 0
@@ -63,44 +62,36 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
             resultats_finaux[nom_profil] = "ERREUR_TAILLE"
             continue
 
-        # Tri intelligent (les plus grandes pièces d'abord)
         items_grouped.sort(key=lambda item: item['longueur'], reverse=True)
 
-        # Calculer une borne max raisonnable de barres pour ne pas surcharger l'IA
         borne_sup_barres = int(math.ceil(longueur_totale_pieces / longueur_barre_standard) * 1.2) + 2
-        borne_sup_barres = min(borne_sup_barres, qte_totale_pieces) # Au pire, 1 barre par pièce
+        borne_sup_barres = min(borne_sup_barres, qte_totale_pieces) 
         
         barres_liste = [{'id': nom_profil, 'longueur': longueur_barre_standard} for _ in range(borne_sup_barres)]
 
         model = cp_model.CpModel()
         
-        # x[i, j] = Nombre de pièces du type 'i' mises dans la barre 'j' (Variable Entière !)
         x = {} 
         for i in range(len(items_grouped)):
             for j in range(len(barres_liste)):
                 x[i, j] = model.NewIntVar(0, items_grouped[i]['qte'], f'x_{i}_{j}')
                 
-        # y[j] = 1 si la barre 'j' est utilisée, 0 sinon
         y = {} 
         for j in range(len(barres_liste)):
             y[j] = model.NewBoolVar(f'y_{j}')
 
-        # Contrainte : Toutes les pièces de chaque type doivent être placées
         for i in range(len(items_grouped)):
             model.Add(sum(x[i, j] for j in range(len(barres_liste))) == items_grouped[i]['qte'])
 
-        # Symétrie : Remplir la barre j avant la barre j+1
         for j in range(1, len(barres_liste)):
             model.Add(y[j] <= y[j-1])
 
-        # Contrainte de capacité de la barre
         lame = int(epaisseur_lame * 10)
         for j in range(len(barres_liste)):
             capacite = int(barres_liste[j]['longueur'] * 10)
             somme_longueurs = sum((int(items_grouped[i]['longueur'] * 10) + lame) * x[i, j] for i in range(len(items_grouped)))
             model.Add(somme_longueurs <= (capacite + lame) * y[j])
 
-        # Fonction objectif : Tassement à gauche
         poids_lourd_barre = max(10000, qte_totale_pieces * len(barres_liste) + 100)
         termes_objectif = []
         for j in range(len(barres_liste)):
@@ -110,7 +101,6 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
                 
         model.Minimize(sum(termes_objectif))
         
-        # Résolution
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = 15.0
         status = solver.Solve(model)
