@@ -56,6 +56,19 @@ def formater_df_standards(df):
     df["Section B (mm)"] = pd.to_numeric(df["Section B (mm)"], errors='coerce')
     df["Épaisseur (mm)"] = pd.to_numeric(df["Épaisseur (mm)"], errors='coerce')
     df["Poids (kg/m)"] = pd.to_numeric(df["Poids (kg/m)"], errors='coerce')
+    return df
+
+def formater_df_profils(df):
+    if df is None or df.empty: return pd.DataFrame(columns=COL_PROFILS)
+    df = df.copy()
+    for col in COL_PROFILS:
+        if col not in df.columns: df[col] = None
+    df["Nom"] = df["Nom"].fillna("").astype(str)
+    df["Longueur Barre (mm)"] = pd.to_numeric(df["Longueur Barre (mm)"], errors='coerce')
+    df["Section A (mm)"] = pd.to_numeric(df["Section A (mm)"], errors='coerce')
+    df["Section B (mm)"] = pd.to_numeric(df["Section B (mm)"], errors='coerce')
+    df["Épaisseur (mm)"] = pd.to_numeric(df["Épaisseur (mm)"], errors='coerce')
+    df["Poids (kg/m)"] = pd.to_numeric(df["Poids (kg/m)"], errors='coerce')
     df["Couleur"] = df["Couleur"].fillna("").astype(str)
     df["Longueur Peinture (mm)"] = pd.to_numeric(df["Longueur Peinture (mm)"], errors='coerce')
     return df
