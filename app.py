@@ -53,43 +53,53 @@ with st.sidebar:
     st.divider()
     st.header("☁️ Sauvegarde")
     
+    projet_courant = st.session_state.workspace[st.session_state.projet_actif]
+    
+    # SECURITÉ 2.1 : Détection suppression Profils de Projet
+    df_prof_actuel = projet_courant.get("profils_edited", projet_courant["profils"])
+    a_supprime_prof = len(df_prof_actuel) < len(projet_courant["profils"])
+    pwd_proj = ""
+    
+    if a_supprime_prof:
+        st.warning("⚠️ Des profils ont été supprimés.")
+        pwd_proj = st.text_input("Mot de passe requis pour supprimer", type="password", key="pwd_proj")
+        
     if st.button("☁️ Enregistrer le projet courant", type="primary"):
-        with st.spinner("Envoi vers Supabase..."):
-            try:
-                nom_p = st.session_state.projet_actif
-                projet_courant = st.session_state.workspace[nom_p]
-                
-                df_prof = projet_courant.get("profils_edited", projet_courant["profils"])
-                dict_listes = {}
-                for l_name, l_base in projet_courant["listes"].items():
-                    dict_listes[l_name] = projet_courant.get("listes_edited", {}).get(l_name, l_base)
-                
+        if a_supprime_prof and pwd_proj != "4855":
+            st.error("❌ Mot de passe incorrect. Enregistrement bloqué.")
+        else:
+            with st.spinner("Envoi vers Supabase..."):
                 try:
-                    pieces_ignorees = db.sauvegarder_projet(nom_p, df_prof, dict_listes)
-                    if pieces_ignorees:
-                        for nom_l in set(pieces_ignorees):
-                            st.warning(f"⚠️ Une pièce de la liste '{nom_l}' a été ignorée car la 'Référence' est vide.")
-                    st.success("Projet sauvegardé avec succès !")
-                except Exception as db_err:
-                    if str(db_err) == "WARNING_COLONNE_MANQUANTE":
-                        st.warning("⚠️ Projet sauvegardé, MAIS la colonne 'coupe_section' n'existe pas encore dans votre base Supabase. Merci de l'ajouter dans la table 'gp_debit_pieces' (type texte).")
-                    else:
-                        raise db_err
+                    dict_listes = {}
+                    for l_name, l_base in projet_courant["listes"].items():
+                        dict_listes[l_name] = projet_courant.get("listes_edited", {}).get(l_name, l_base)
+                    
+                    try:
+                        pieces_ignorees = db.sauvegarder_projet(st.session_state.projet_actif, df_prof_actuel, dict_listes)
+                        # Mise à jour de la base locale après succès
+                        projet_courant["profils"] = df_prof_actuel
+                        
+                        if pieces_ignorees:
+                            for nom_l in set(pieces_ignorees):
+                                st.warning(f"⚠️ Une pièce de la liste '{nom_l}' a été ignorée car la 'Référence' est vide.")
+                        st.success("Projet sauvegardé avec succès !")
+                    except Exception as db_err:
+                        if str(db_err) == "WARNING_COLONNE_MANQUANTE":
+                            st.warning("⚠️ Sauvegardé, MAIS la colonne 'coupe_section' n'existe pas dans Supabase.")
+                        else:
+                            raise db_err
 
-            except Exception as e:
-                st.error(f"❌ Erreur Base de données : {e}")
+                except Exception as e:
+                    st.error(f"❌ Erreur Base de données : {e}")
 
     st.divider()
     st.header("⚙️ Paramètres Machine")
     epaisseur_lame = st.number_input("Lame (mm)", min_value=0.0, value=3.0, step=0.1)
-    
-    st.info("💡 **Astuce Pro :** Sur tous les tableaux, cliquez sur l'en-tête d'une colonne pour **Trier**, ou passez la souris sur le tableau pour voir la loupe de **Recherche** en haut à droite !")
 
 # -----------------------------------------------------------------------------
 # CORPS DE L'APPLICATION
 # -----------------------------------------------------------------------------
 st.title(f"🪚 Projet : {st.session_state.projet_actif}")
-projet_courant = st.session_state.workspace[st.session_state.projet_actif]
 
 tab1, tab2, tab3, tab4 = st.tabs(["📚 1. Base Standard", f"📦 2. Profils du Projet ({st.session_state.projet_actif})", "📝 3. Listes de Pièces", "📊 4. Résultats & Commandes"])
 
@@ -105,7 +115,6 @@ with tab1:
                 try:
                     df_new_std = pd.read_excel(fichier_std)
                     df_new_std = db.formater_df_standards(df_new_std)
-                    # Fusion intelligente : Ajoute les nouveaux et met à jour les existants sans toucher au reste
                     df_combined = pd.concat([st.session_state.df_standards_base, df_new_std]).drop_duplicates(subset=["Nom"], keep="last")
                     st.session_state.df_standards_base = df_combined
                     st.rerun()
@@ -121,13 +130,25 @@ with tab1:
             "Section B (mm)": st.column_config.NumberColumn("Section B (mm)", required=True)
         }
     )
+    
+    # SECURITÉ 1.1 : Détection suppression Standards
+    a_supprime_std = len(st.session_state.df_standards_edited) < len(st.session_state.df_standards_base)
+    pwd_std = ""
+    if a_supprime_std:
+        st.warning("⚠️ Vous avez supprimé des profils standards.")
+        pwd_std = st.text_input("Mot de passe requis", type="password", key="pwd_std")
+
     if st.button("Sauvegarder Standards dans la Base", type="primary"):
-        with st.spinner("Sauvegarde en cours..."):
-            try:
-                db.sauvegarder_standards(st.session_state.df_standards_edited)
-                st.toast("Standards sauvegardés", icon="✅")
-            except Exception as e:
-                st.error(f"Erreur Standards : {e}")
+        if a_supprime_std and pwd_std != "4855":
+            st.error("❌ Mot de passe incorrect.")
+        else:
+            with st.spinner("Sauvegarde en cours..."):
+                try:
+                    db.sauvegarder_standards(st.session_state.df_standards_edited)
+                    st.session_state.df_standards_base = st.session_state.df_standards_edited
+                    st.toast("Standards sauvegardés", icon="✅")
+                except Exception as e:
+                    st.error(f"Erreur Standards : {e}")
 
 with tab2:
     st.subheader(f"Profils (Barres d'approvisionnement) : {st.session_state.projet_actif}")
@@ -178,16 +199,52 @@ with tab3:
                     st.session_state.liste_active = liste_choisie
                     st.rerun()
             with c2:
-                with st.expander("➕ Nouvelle liste"):
-                    nouvelle_liste = st.text_input("Nom")
-                    if st.button("Ajouter") and nouvelle_liste:
-                        projet_courant["listes"][nouvelle_liste] = db.formater_df_listes(pd.DataFrame())
-                        st.session_state.liste_active = nouvelle_liste
-                        st.rerun()
+                with st.expander("⚙️ Options Liste"):
+                    st.markdown("**Renommer**")
+                    nouveau_nom = st.text_input("Nouveau nom", value=st.session_state.liste_active, key="rename_list")
+                    if st.button("Valider"):
+                        if nouveau_nom != st.session_state.liste_active and nouveau_nom not in projet_courant["listes"]:
+                            anc_nom = st.session_state.liste_active
+                            projet_courant["listes"][nouveau_nom] = projet_courant["listes"].pop(anc_nom)
+                            if "listes_edited" in projet_courant and anc_nom in projet_courant["listes_edited"]:
+                                projet_courant["listes_edited"][nouveau_nom] = projet_courant["listes_edited"].pop(anc_nom)
+                            st.session_state.liste_active = nouveau_nom
+                            st.rerun()
+                        elif nouveau_nom in projet_courant["listes"] and nouveau_nom != st.session_state.liste_active:
+                            st.error("Nom déjà pris.")
+                            
+                    st.divider()
+                    st.markdown("**Supprimer**")
+                    pwd_list = st.text_input("Mot de passe", type="password", key="pwd_list")
+                    if st.button("🗑️ Supprimer"):
+                        if pwd_list == "4855":
+                            anc_nom = st.session_state.liste_active
+                            del projet_courant["listes"][anc_nom]
+                            if "listes_edited" in projet_courant and anc_nom in projet_courant["listes_edited"]:
+                                del projet_courant["listes_edited"][anc_nom]
+                            
+                            restantes = list(projet_courant["listes"].keys())
+                            if restantes: st.session_state.liste_active = restantes[0]
+                            else:
+                                projet_courant["listes"]["Liste 1"] = db.formater_df_listes(pd.DataFrame())
+                                st.session_state.liste_active = "Liste 1"
+                            st.rerun()
+                        elif pwd_list != "":
+                            st.error("Mot de passe incorrect.")
+
             with c3:
-                with st.expander("📥 Import Excel"):
-                    st.info("Colonnes: Référence, Profil, Longueur (mm), Quantité, Coupe sur Section, Angle Gauche (°), Angle Droite (°), Symétrique")
-                    fichier_excel = st.file_uploader("Ajouter", type=["xlsx"], label_visibility="collapsed")
+                with st.expander("➕ Ajouter"):
+                    st.markdown("**Nouvelle Liste**")
+                    nouvelle_liste = st.text_input("Nom", key="add_list")
+                    if st.button("Créer") and nouvelle_liste:
+                        if nouvelle_liste not in projet_courant["listes"]:
+                            projet_courant["listes"][nouvelle_liste] = db.formater_df_listes(pd.DataFrame())
+                            st.session_state.liste_active = nouvelle_liste
+                            st.rerun()
+                    st.divider()
+                    st.markdown("**Importer Excel ici**")
+                    st.caption("Col: Référence, Profil, Longueur (mm), Quantité, Coupe sur Section, Angle Gauche (°), Angle Droite (°), Symétrique")
+                    fichier_excel = st.file_uploader("Fichier", type=["xlsx"], label_visibility="collapsed")
                     if st.button("Importer") and fichier_excel:
                         try:
                             df_excel = pd.read_excel(fichier_excel)
@@ -291,7 +348,7 @@ with tab4:
                         if total_longueur_barres > 0:
                             rendement = (total_longueur_pieces / total_longueur_barres) * 100
                             
-                            # --- GÉNÉRATION DU PDF EN ARRIÈRE-PLAN ---
+                            # --- GÉNÉRATION DU PDF A4 EN ARRIÈRE-PLAN ---
                             metrics_pdf = {
                                 "conso": total_longueur_barres / 1000,
                                 "utile": total_longueur_pieces / 1000,
@@ -302,14 +359,13 @@ with tab4:
                             }
                             pdf_buffer = draw.generer_rapport_pdf(resultats, st.session_state.projet_actif, metrics_pdf)
                             
-                            # --- AFFICHAGE DES RÉSULTATS ---
                             col1, col2, col3, col4, col5 = st.columns([1.5, 1.5, 1.5, 1.5, 2])
                             col1.metric("Matière Consommée", f"{total_longueur_barres / 1000:.2f} m")
                             col2.metric("Matière Utile", f"{total_longueur_pieces / 1000:.2f} m")
                             col3.metric("Rendement", f"{rendement:.1f} %", f"-{100-rendement:.1f} %", delta_color="inverse")
                             col4.metric("Surface Peinture", f"{total_surface_peinture:.2f} m²")
                             with col5:
-                                st.download_button("📄 Télécharger Rapport PDF", data=pdf_buffer, file_name=f"Rapport_{st.session_state.projet_actif}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+                                st.download_button("📄 Télécharger Rapport PDF (A4)", data=pdf_buffer, file_name=f"Rapport_{st.session_state.projet_actif}.pdf", mime="application/pdf", type="primary", use_container_width=True)
                             st.divider()
 
                         for nom_profil, resultat in resultats.items():
