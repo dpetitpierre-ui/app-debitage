@@ -94,7 +94,24 @@ projet_courant = st.session_state.workspace[st.session_state.projet_actif]
 tab1, tab2, tab3, tab4 = st.tabs(["📚 1. Base Standard", f"📦 2. Profils du Projet ({st.session_state.projet_actif})", "📝 3. Listes de Pièces", "📊 4. Résultats & Commandes"])
 
 with tab1:
-    st.subheader("Catalogue des Profils Standards (Commun)")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.subheader("Catalogue des Profils Standards (Commun)")
+    with col2:
+        with st.expander("📥 Importer depuis Excel"):
+            st.info("Colonnes requises : Matériau, Nom, Section A (mm), Section B (mm), Épaisseur (mm), Poids (kg/m)")
+            fichier_std = st.file_uploader("Fichier Standards (.xlsx)", type=["xlsx", "xls"], key="import_std")
+            if fichier_std and st.button("Ajouter à la base"):
+                try:
+                    df_new_std = pd.read_excel(fichier_std)
+                    df_new_std = db.formater_df_standards(df_new_std)
+                    # Fusion intelligente : Ajoute les nouveaux et met à jour les existants sans toucher au reste
+                    df_combined = pd.concat([st.session_state.df_standards_base, df_new_std]).drop_duplicates(subset=["Nom"], keep="last")
+                    st.session_state.df_standards_base = df_combined
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erreur d'import : {e}")
+
     st.session_state.df_standards_edited = st.data_editor(
         st.session_state.df_standards_base, num_rows="dynamic", use_container_width=True, key="editor_std", hide_index=True, 
         column_config={
@@ -104,7 +121,7 @@ with tab1:
             "Section B (mm)": st.column_config.NumberColumn("Section B (mm)", required=True)
         }
     )
-    if st.button("Sauvegarder Standards"):
+    if st.button("Sauvegarder Standards dans la Base", type="primary"):
         with st.spinner("Sauvegarde en cours..."):
             try:
                 db.sauvegarder_standards(st.session_state.df_standards_edited)
@@ -133,7 +150,6 @@ with tab3:
             st.write(f"- **{nom_l}** : {int(qte)} pièce(s)")
             total_pieces += qte
             
-            # Préparation pour l'export Excel
             if not df_apercu.empty:
                 df_export = df_apercu.copy()
                 df_export.insert(0, "Nom de la Liste", nom_l)
@@ -150,25 +166,42 @@ with tab3:
     with col_gauche:
         mode_vue = st.radio("Mode d'affichage", ["Vue par Liste (Classique)", "Toutes les Pièces (Vue Globale)"], horizontal=True)
         
-        # Consolider la liste des profils (Projet + Standards) pour le menu déroulant
         profils_projet = projet_courant.get("profils_edited", projet_courant["profils"])['Nom'].dropna().unique().tolist()
         profils_standards = st.session_state.df_standards_base['Nom'].dropna().unique().tolist()
         tous_les_profils = sorted(list(set(profils_projet + profils_standards)))
 
         if mode_vue == "Vue par Liste (Classique)":
-            c1, c2 = st.columns([1, 1])
+            c1, c2, c3 = st.columns([2, 1, 1])
             with c1:
                 liste_choisie = st.selectbox("📂 Liste active :", noms_listes, index=noms_listes.index(st.session_state.liste_active) if st.session_state.liste_active in noms_listes else 0)
                 if liste_choisie != st.session_state.liste_active:
                     st.session_state.liste_active = liste_choisie
                     st.rerun()
             with c2:
-                with st.expander("➕ Créer une nouvelle liste"):
+                with st.expander("➕ Nouvelle liste"):
                     nouvelle_liste = st.text_input("Nom")
                     if st.button("Ajouter") and nouvelle_liste:
                         projet_courant["listes"][nouvelle_liste] = db.formater_df_listes(pd.DataFrame())
                         st.session_state.liste_active = nouvelle_liste
                         st.rerun()
+            with c3:
+                with st.expander("📥 Import Excel"):
+                    st.info("Colonnes: Référence, Profil, Longueur (mm), Quantité, Coupe sur Section, Angle Gauche (°), Angle Droite (°), Symétrique")
+                    fichier_excel = st.file_uploader("Ajouter", type=["xlsx"], label_visibility="collapsed")
+                    if st.button("Importer") and fichier_excel:
+                        try:
+                            df_excel = pd.read_excel(fichier_excel)
+                            df_formate = db.formater_df_listes(df_excel)
+                            df_formate = df_formate.dropna(subset=["Référence", "Profil"], how='all')
+                            liste_actuelle = st.session_state.liste_active
+                            df_existante = projet_courant.get("listes_edited", {}).get(liste_actuelle, projet_courant["listes"][liste_actuelle])
+                            df_fusion = pd.concat([df_existante, df_formate], ignore_index=True)
+                            projet_courant["listes"][liste_actuelle] = df_fusion
+                            if "listes_edited" not in projet_courant: projet_courant["listes_edited"] = {}
+                            projet_courant["listes_edited"][liste_actuelle] = df_fusion
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erreur d'import : {e}")
 
             df_liste_active = projet_courant.get("listes_edited", {}).get(st.session_state.liste_active, projet_courant["listes"][st.session_state.liste_active])
             if "listes_edited" not in projet_courant: projet_courant["listes_edited"] = {}
@@ -203,7 +236,7 @@ with tab3:
             
             if st.button("✅ Valider les déplacements inter-listes", type="primary"):
                 nouvelles_listes = {}
-                for l_name in noms_listes: # S'assurer que les listes vides ne sont pas effacées
+                for l_name in noms_listes: 
                     df_filtre = df_global_edited[df_global_edited["Nom de la Liste"] == l_name].drop(columns=["Nom de la Liste"])
                     nouvelles_listes[l_name] = df_filtre
                 projet_courant["listes_edited"] = nouvelles_listes
@@ -257,11 +290,26 @@ with tab4:
                         
                         if total_longueur_barres > 0:
                             rendement = (total_longueur_pieces / total_longueur_barres) * 100
-                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            # --- GÉNÉRATION DU PDF EN ARRIÈRE-PLAN ---
+                            metrics_pdf = {
+                                "conso": total_longueur_barres / 1000,
+                                "utile": total_longueur_pieces / 1000,
+                                "rendement": rendement,
+                                "peinture": total_surface_peinture,
+                                "epaisseur_lame": epaisseur_lame,
+                                "seuil_chute": SEUIL_CHUTE
+                            }
+                            pdf_buffer = draw.generer_rapport_pdf(resultats, st.session_state.projet_actif, metrics_pdf)
+                            
+                            # --- AFFICHAGE DES RÉSULTATS ---
+                            col1, col2, col3, col4, col5 = st.columns([1.5, 1.5, 1.5, 1.5, 2])
                             col1.metric("Matière Consommée", f"{total_longueur_barres / 1000:.2f} m")
-                            col2.metric("Matière Utile (Pièces)", f"{total_longueur_pieces / 1000:.2f} m")
-                            col3.metric("Rendement", f"{rendement:.1f} %", f"-{100-rendement:.1f} % chute", delta_color="inverse")
-                            col4.metric("Surface à Peindre", f"{total_surface_peinture:.2f} m²")
+                            col2.metric("Matière Utile", f"{total_longueur_pieces / 1000:.2f} m")
+                            col3.metric("Rendement", f"{rendement:.1f} %", f"-{100-rendement:.1f} %", delta_color="inverse")
+                            col4.metric("Surface Peinture", f"{total_surface_peinture:.2f} m²")
+                            with col5:
+                                st.download_button("📄 Télécharger Rapport PDF", data=pdf_buffer, file_name=f"Rapport_{st.session_state.projet_actif}.pdf", mime="application/pdf", type="primary", use_container_width=True)
                             st.divider()
 
                         for nom_profil, resultat in resultats.items():
