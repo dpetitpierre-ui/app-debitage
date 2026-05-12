@@ -17,7 +17,7 @@ EPAISSEUR_LAME = 4.0   # Fixé en dur pour éviter les erreurs de saisie
 CHUTE_MINIMUM = 30.0   # Mors de serrage obligatoire en fin de barre
 
 # -----------------------------------------------------------------------------
-# CHARGEMENT DEPUIS SUPABASE
+# CHARGEMENT DEPUIS SUPABASE ET GESTION DE LA MÉMOIRE (URL)
 # -----------------------------------------------------------------------------
 if 'workspace' not in st.session_state:
     with st.spinner("Connexion à la base de données..."):
@@ -25,7 +25,22 @@ if 'workspace' not in st.session_state:
         
         st.session_state.df_standards_base = df_standards_base
         st.session_state.workspace = workspace
-        st.session_state.projet_actif = list(workspace.keys())[0]
+        
+        liste_projets = list(workspace.keys())
+        
+        # --- MODIFICATION CTO : Mémoire individuelle via l'URL ---
+        # 1. On regarde si l'URL contient déjà un projet en mémoire
+        projet_en_url = st.query_params.get("projet")
+        
+        # 2. Si le projet existe bien dans la base, on le charge, sinon on prend le premier
+        if projet_en_url and projet_en_url in liste_projets:
+            st.session_state.projet_actif = projet_en_url
+        else:
+            st.session_state.projet_actif = liste_projets[0]
+            
+        # 3. On met à jour l'URL proprement pour le confort de l'utilisateur
+        st.query_params["projet"] = st.session_state.projet_actif
+        
         st.session_state.liste_active = list(workspace[st.session_state.projet_actif]["listes"].keys())[0] if workspace[st.session_state.projet_actif]["listes"] else None
         st.toast("✅ Base de données connectée", icon="☁️")
 
@@ -40,6 +55,10 @@ with st.sidebar:
     
     if projet_choisi != st.session_state.projet_actif:
         st.session_state.projet_actif = projet_choisi
+        
+        # --- MODIFICATION CTO : Mise à jour de l'URL au changement de projet ---
+        st.query_params["projet"] = projet_choisi 
+        
         st.session_state.liste_active = list(st.session_state.workspace[projet_choisi]["listes"].keys())[0] if st.session_state.workspace[projet_choisi]["listes"] else None
         st.rerun()
 
@@ -49,6 +68,10 @@ with st.sidebar:
             if nouveau_projet not in st.session_state.workspace:
                 st.session_state.workspace[nouveau_projet] = {"profils": db.formater_df_profils(pd.DataFrame()), "listes": {"Liste 1": db.formater_df_listes(pd.DataFrame())}}
                 st.session_state.projet_actif = nouveau_projet
+                
+                # --- MODIFICATION CTO : Mise à jour de l'URL pour le nouveau projet ---
+                st.query_params["projet"] = nouveau_projet 
+                
                 st.session_state.liste_active = "Liste 1"
                 st.rerun()
             else:
@@ -336,7 +359,6 @@ with tab4:
                     profils_standards = st.session_state.get("df_standards_edited", st.session_state.df_standards_base)
                     profils_a_utiliser = pd.concat([profils_projet, profils_standards]).drop_duplicates(subset=['Nom'], keep='first')
                     
-                    # --- MODIFICATION CTO : Passage des constantes ---
                     resultats = opt.optimiser_projet_complet(df_pieces_global, profils_a_utiliser, EPAISSEUR_LAME, CHUTE_MINIMUM)
                     
                     if not resultats:
@@ -383,7 +405,6 @@ with tab4:
                         for nom_profil, resultat in resultats.items():
                             st.markdown(f"### 🔹 Profil : {nom_profil}")
                             
-                            # --- MODIFICATION CTO : Gestion des erreurs claires ---
                             if type(resultat) == str: 
                                 if resultat == "ERREUR_TAILLE":
                                     st.error(f"❌ Impossible : Une pièce est trop grande pour la barre (n'oubliez pas la marge de sécurité de {CHUTE_MINIMUM} mm).")
