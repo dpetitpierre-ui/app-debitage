@@ -2,11 +2,12 @@ import pandas as pd
 from ortools.sat.python import cp_model
 import math
 
-def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
+# --- MODIFICATION CTO : Ajout de la chute_minimum dans l'équation ---
+def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame, chute_minimum=30.0):
     """
     Algorithme v2 (Scalable).
-    Utilise des variables entières (IntVar) plutôt que d'éclater les quantités.
-    Ceci empêche l'explosion combinatoire de la mémoire sur de grosses listes.
+    Intègre une contrainte inviolable : chaque barre utilisée DOIT 
+    conserver une chute_minimum pour la prise machine (mors de serrage).
     """
     resultats_finaux = {}
     
@@ -21,11 +22,9 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
     for index, profil in df_profils.iterrows():
         nom_profil = profil['Nom']
         
-        # --- MODIFICATION CTO : Récupération des deux sections ---
         sec_a = profil.get('Section A (mm)', 50.0)
         sec_b = profil.get('Section B (mm)', 50.0)
         
-        # Sécurité anti-bug (si la cellule est vide dans Excel/Supabase)
         if pd.isna(sec_a) or sec_a <= 0: sec_a = 50.0
         if pd.isna(sec_b) or sec_b <= 0: sec_b = sec_a
         
@@ -65,7 +64,10 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
             resultats_finaux[nom_profil] = "LONGUEUR_MANQUANTE"
             continue
             
-        if any(item['longueur'] > longueur_barre_standard for item in items_grouped):
+        # --- MODIFICATION CTO : Bouclier anti-impossibilité ---
+        # Si une seule pièce fait 6000mm sur une barre de 6000, 
+        # elle ne rentrera pas à cause du mors de 30mm.
+        if any(item['longueur'] > longueur_barre_standard - chute_minimum for item in items_grouped):
             resultats_finaux[nom_profil] = "ERREUR_TAILLE"
             continue
 
@@ -94,10 +96,15 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
             model.Add(y[j] <= y[j-1])
 
         lame = int(epaisseur_lame * 10)
+        chute_min_int = int(chute_minimum * 10) # Précision au dixième de millimètre
+        
         for j in range(len(barres_liste)):
             capacite = int(barres_liste[j]['longueur'] * 10)
             somme_longueurs = sum((int(items_grouped[i]['longueur'] * 10) + lame) * x[i, j] for i in range(len(items_grouped)))
-            model.Add(somme_longueurs <= (capacite + lame) * y[j])
+            
+            # --- CŒUR DE LA MODIFICATION CTO ---
+            # La "capacité" d'une barre est virtuellement amputée de la chute_minimum.
+            model.Add(somme_longueurs <= (capacite - chute_min_int + lame) * y[j])
 
         poids_lourd_barre = max(10000, qte_totale_pieces * len(barres_liste) + 100)
         termes_objectif = []
@@ -126,12 +133,14 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
                             longueur_utilisee += piece_copie['longueur'] + epaisseur_lame
                             
                     longueur_utilisee -= epaisseur_lame 
-                    resultats_barres.append({'barre_longueur': barres_liste[j]['longueur'], 'pieces': pieces_barre, 'chute': barres_liste[j]['longueur'] - longueur_utilisee})
+                    chute_reelle = barres_liste[j]['longueur'] - longueur_utilisee
+                    
+                    resultats_barres.append({'barre_longueur': barres_liste[j]['longueur'], 'pieces': pieces_barre, 'chute': chute_reelle})
             
             resultats_finaux[nom_profil] = {
                 "statut": "SUCCES", 
                 "barres": resultats_barres, 
-                "section_a": sec_a, # <-- Transmission des sections A et B
+                "section_a": sec_a,
                 "section_b": sec_b, 
                 "longueur_peinture": longueur_peinture,
                 "longueur_barre_standard": longueur_barre_standard
