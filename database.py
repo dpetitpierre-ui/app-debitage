@@ -24,11 +24,27 @@ COL_LISTES = ["Référence", "Profil", "Longueur (mm)", "Quantité", "Coupe sur 
 # FONCTIONS UTILITAIRES INTERNES
 # -----------------------------------------------------------------------------
 def _requete_get(table):
-    r = requests.get(f"{SUPABASE_URL}/rest/v1/{table}", headers=HEADERS)
-    if r.status_code == 200:
-        return r.json()
-    else:
-        raise Exception(f"Erreur de lecture ({table}) : {r.text}")
+    """ MODIFICATION CTO : Pagination pour contourner la limite des 1000 lignes """
+    all_data = []
+    offset = 0
+    limit = 1000
+    while True:
+        headers_pagines = HEADERS.copy()
+        headers_pagines["Range-Unit"] = "items"
+        headers_pagines["Range"] = f"{offset}-{offset + limit - 1}"
+        
+        r = requests.get(f"{SUPABASE_URL}/rest/v1/{table}", headers=headers_pagines)
+        if r.status_code in [200, 206]:
+            data = r.json()
+            if not data:
+                break
+            all_data.extend(data)
+            if len(data) < limit:
+                break
+            offset += limit
+        else:
+            raise Exception(f"Erreur de lecture ({table}) : {r.text}")
+    return all_data
 
 def _requete_delete(table, colonne, valeur):
     url = f"{SUPABASE_URL}/rest/v1/{table}?{colonne}=eq.{valeur}"
@@ -44,7 +60,6 @@ def _requete_insert(table, data):
 
 # --- FORMATAGE SÉCURISÉ DES DONNÉES ---
 def formater_df_standards(df):
-    """ Formate le catalogue des standards. """
     if df is None or df.empty: return pd.DataFrame(columns=COL_STANDARDS)
     df = df.copy()
     for col in COL_STANDARDS:
@@ -59,7 +74,6 @@ def formater_df_standards(df):
     return df
 
 def formater_df_profils(df):
-    """ Formate les profils d'approvisionnement d'un projet. """
     if df is None or df.empty: return pd.DataFrame(columns=COL_PROFILS)
     df = df.copy()
     for col in COL_PROFILS:
@@ -75,7 +89,6 @@ def formater_df_profils(df):
     return df
 
 def formater_df_listes(df):
-    """ Formate les listes de pièces d'un projet. """
     if df is None or df.empty: return pd.DataFrame(columns=COL_LISTES)
     df = df.copy()
     for col in COL_LISTES:
@@ -93,7 +106,6 @@ def formater_df_listes(df):
 # -----------------------------------------------------------------------------
 # L'API PUBLIQUE DU MODULE
 # -----------------------------------------------------------------------------
-
 def charger_donnees_initiales():
     try:
         db_standards = _requete_get("gp_debit_standards")
@@ -187,12 +199,15 @@ def sauvegarder_projet(nom_projet, df_profils, dict_listes):
     
     if insert_pieces:
         try:
-            _requete_insert("gp_debit_pieces", insert_pieces)
+            # Sécurité pour les gros projets : on envoie par paquets de 1000
+            chunk_size = 1000
+            for i in range(0, len(insert_pieces), chunk_size):
+                _requete_insert("gp_debit_pieces", insert_pieces[i:i+chunk_size])
         except Exception as e:
             if "coupe_section" in str(e).lower():
-                for p in insert_pieces:
-                    p.pop("coupe_section", None)
-                _requete_insert("gp_debit_pieces", insert_pieces)
+                for p in insert_pieces: p.pop("coupe_section", None)
+                for i in range(0, len(insert_pieces), 1000):
+                    _requete_insert("gp_debit_pieces", insert_pieces[i:i+1000])
                 raise Exception("WARNING_COLONNE_MANQUANTE")
             else:
                 raise e
@@ -221,8 +236,7 @@ def sauvegarder_standards(df_standards):
             _requete_insert("gp_debit_standards", insert_std)
         except Exception as e:
             if "longueur_barre" in str(e).lower():
-                for s in insert_std:
-                    s.pop("longueur_barre", None)
+                for s in insert_std: s.pop("longueur_barre", None)
                 _requete_insert("gp_debit_standards", insert_std)
                 raise Exception("WARNING_COLONNE_MANQUANTE_STD")
             else:
