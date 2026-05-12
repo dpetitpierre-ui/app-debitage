@@ -5,12 +5,15 @@ import pandas as pd
 import math
 import io
 
-def dessiner_barre(barre_info, epaisseur_lame, largeur_profil, seuil_chute):
+def dessiner_barre(barre_info, epaisseur_lame, section_a, section_b, seuil_chute):
     """ Dessin adapté pour l'affichage web (Streamlit) """
+    # La largeur visuelle du dessin reste constante pour éviter de casser la géométrie
+    largeur_visuelle = section_a if section_a > 0 else 50.0
+    
     fig, ax = plt.subplots(figsize=(20, 0.4)) 
     longueur_totale = barre_info['barre_longueur']
     
-    ax.add_patch(patches.Rectangle((0, 0), longueur_totale, largeur_profil, facecolor='#f0f0f0', edgecolor='black'))
+    ax.add_patch(patches.Rectangle((0, 0), longueur_totale, largeur_visuelle, facecolor='#f0f0f0', edgecolor='black'))
     position_actuelle = 0
     
     for p in barre_info['pieces']:
@@ -20,44 +23,52 @@ def dessiner_barre(barre_info, epaisseur_lame, largeur_profil, seuil_chute):
         if pd.isna(ang_g): ang_g = 90.0
         if pd.isna(ang_d): ang_d = 90.0
         
-        dx_g = largeur_profil / math.tan(math.radians(ang_g)) if ang_g != 90 else 0
-        dx_d = largeur_profil / math.tan(math.radians(ang_d)) if ang_d != 90 else 0
+        # --- LOGIQUE DE SÉLECTION DE LA VALEUR DE COUPE ---
+        valeur_coupe = section_b if section == 'B' else section_a
+        
+        dx_g = largeur_visuelle / math.tan(math.radians(ang_g)) if ang_g != 90 else 0
+        dx_d = largeur_visuelle / math.tan(math.radians(ang_d)) if ang_d != 90 else 0
         
         x_min, x_max = position_actuelle, position_actuelle + L
         x_bl, x_tl = x_min + min((dx_g if dx_g > 0 else 0), L), x_min + min((-dx_g if dx_g < 0 else 0), L)
         x_br, x_tr = x_max - min((dx_d if dx_d > 0 else 0), L), x_max - min((-dx_d if dx_d < 0 else 0), L)
         
-        ax.add_patch(patches.Polygon([(x_bl, 0), (x_tl, largeur_profil), (x_tr, largeur_profil), (x_br, 0)], closed=True, facecolor='#4CAF50', edgecolor='black', linewidth=1))
+        ax.add_patch(patches.Polygon([(x_bl, 0), (x_tl, largeur_visuelle), (x_tr, largeur_visuelle), (x_br, 0)], closed=True, facecolor='#4CAF50', edgecolor='black', linewidth=1))
         
         texte_piece = f"{p['ref']}\n{L}mm"
-        if section == 'B': texte_piece += "\n(Sect. B)"
+        
+        # --- AFFICHAGE CLAIR DE LA SECTION ---
+        # :g permet de retirer les zéros inutiles (ex: 40.0 devient 40)
+        if pd.notna(valeur_coupe) and valeur_coupe > 0:
+            texte_piece += f"\n(↕ {valeur_coupe:g} mm)"
             
-        ax.text(position_actuelle + L/2, largeur_profil/2, texte_piece, ha='center', va='center', color='white', fontweight='bold', fontsize=7)
+        ax.text(position_actuelle + L/2, largeur_visuelle/2, texte_piece, ha='center', va='center', color='white', fontweight='bold', fontsize=7)
         position_actuelle += L
         
         if position_actuelle + epaisseur_lame <= longueur_totale and position_actuelle < longueur_totale:
-            ax.add_patch(patches.Rectangle((position_actuelle, 0), epaisseur_lame, largeur_profil, facecolor='#F44336', edgecolor='none'))
+            ax.add_patch(patches.Rectangle((position_actuelle, 0), epaisseur_lame, largeur_visuelle, facecolor='#F44336', edgecolor='none'))
             position_actuelle += epaisseur_lame
             
     if position_actuelle < longueur_totale:
         chute = longueur_totale - position_actuelle
         est_reutilisable = chute >= seuil_chute
-        ax.add_patch(patches.Rectangle((position_actuelle, 0), chute, largeur_profil, facecolor='#C8E6C9' if est_reutilisable else '#9E9E9E', edgecolor='black', hatch='' if est_reutilisable else '//'))
-        ax.text(position_actuelle + chute/2, largeur_profil/2, f"♻️ Chute\n{chute:.1f} mm" if est_reutilisable else f"Déchet\n{chute:.1f} mm", ha='center', va='center', color='black', fontweight='bold' if est_reutilisable else 'normal', fontsize=7)
+        ax.add_patch(patches.Rectangle((position_actuelle, 0), chute, largeur_visuelle, facecolor='#C8E6C9' if est_reutilisable else '#9E9E9E', edgecolor='black', hatch='' if est_reutilisable else '//'))
+        ax.text(position_actuelle + chute/2, largeur_visuelle/2, f"♻️ Chute\n{chute:.1f} mm" if est_reutilisable else f"Déchet\n{chute:.1f} mm", ha='center', va='center', color='black', fontweight='bold' if est_reutilisable else 'normal', fontsize=7)
         
     ax.set_xlim(0, longueur_totale)
-    ax.set_ylim(0, largeur_profil * 1.05)
+    ax.set_ylim(0, largeur_visuelle * 1.05)
     ax.axis('off')
     
     fig.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0, hspace=0)
     return fig
 
-def dessiner_barre_pdf(ax, barre_info, epaisseur_lame, largeur_profil, seuil_chute, longueur_standard):
+def dessiner_barre_pdf(ax, barre_info, epaisseur_lame, section_a, section_b, seuil_chute, longueur_standard):
     """ Dessin Ultra-Qualitatif adapté pour l'impression A4 (Multi-Barres) """
+    largeur_visuelle = section_a if section_a > 0 else 50.0
     longueur_totale = barre_info['barre_longueur']
     
     # Fond de la barre
-    ax.add_patch(patches.Rectangle((0, 0), longueur_totale, largeur_profil, facecolor='#ecf0f1', edgecolor='#bdc3c7', linewidth=0.5))
+    ax.add_patch(patches.Rectangle((0, 0), longueur_totale, largeur_visuelle, facecolor='#ecf0f1', edgecolor='#bdc3c7', linewidth=0.5))
     position_actuelle = 0
     
     for p in barre_info['pieces']:
@@ -68,30 +79,33 @@ def dessiner_barre_pdf(ax, barre_info, epaisseur_lame, largeur_profil, seuil_chu
         if pd.isna(ang_g): ang_g = 90.0
         if pd.isna(ang_d): ang_d = 90.0
         
-        dx_g = largeur_profil / math.tan(math.radians(ang_g)) if ang_g != 90 else 0
-        dx_d = largeur_profil / math.tan(math.radians(ang_d)) if ang_d != 90 else 0
+        valeur_coupe = section_b if section == 'B' else section_a
+        
+        dx_g = largeur_visuelle / math.tan(math.radians(ang_g)) if ang_g != 90 else 0
+        dx_d = largeur_visuelle / math.tan(math.radians(ang_d)) if ang_d != 90 else 0
         
         x_min, x_max = position_actuelle, position_actuelle + L
         x_bl, x_tl = x_min + min((dx_g if dx_g > 0 else 0), L), x_min + min((-dx_g if dx_g < 0 else 0), L)
         x_br, x_tr = x_max - min((dx_d if dx_d > 0 else 0), L), x_max - min((-dx_d if dx_d < 0 else 0), L)
         
         # Pièce verte
-        ax.add_patch(patches.Polygon([(x_bl, 0), (x_tl, largeur_profil), (x_tr, largeur_profil), (x_br, 0)], 
+        ax.add_patch(patches.Polygon([(x_bl, 0), (x_tl, largeur_visuelle), (x_tr, largeur_visuelle), (x_br, 0)], 
                                      closed=True, facecolor='#27ae60', edgecolor='black', linewidth=0.5))
         
-        # Texte intelligent (ne s'affiche que si la pièce est assez grande pour le PDF)
+        # Texte intelligent
         if L > 120:
             texte_piece = f"{p['ref']}\n{L}mm"
-            if section == 'B': texte_piece += " (Sect. B)"
-            ax.text(position_actuelle + L/2, largeur_profil/2, texte_piece, ha='center', va='center', color='white', fontweight='bold', fontsize=6)
+            if pd.notna(valeur_coupe) and valeur_coupe > 0:
+                texte_piece += f" (↕ {valeur_coupe:g} mm)"
+            ax.text(position_actuelle + L/2, largeur_visuelle/2, texte_piece, ha='center', va='center', color='white', fontweight='bold', fontsize=6)
         elif L > 50:
-            ax.text(position_actuelle + L/2, largeur_profil/2, f"{L}", ha='center', va='center', color='white', fontsize=5, rotation=90)
+            ax.text(position_actuelle + L/2, largeur_visuelle/2, f"{L}", ha='center', va='center', color='white', fontsize=5, rotation=90)
             
         position_actuelle += L
         
         # Lame (trait rouge)
         if position_actuelle + epaisseur_lame <= longueur_totale and position_actuelle < longueur_totale:
-            ax.add_patch(patches.Rectangle((position_actuelle, 0), epaisseur_lame, largeur_profil, facecolor='#e74c3c', edgecolor='none'))
+            ax.add_patch(patches.Rectangle((position_actuelle, 0), epaisseur_lame, largeur_visuelle, facecolor='#e74c3c', edgecolor='none'))
             position_actuelle += epaisseur_lame
             
     # Traitement de la fin de barre (Chute/Déchet)
@@ -101,15 +115,15 @@ def dessiner_barre_pdf(ax, barre_info, epaisseur_lame, largeur_profil, seuil_chu
         couleur = '#2ecc71' if est_reutilisable else '#bdc3c7'
         alpha = 0.4 if est_reutilisable else 0.3
         
-        ax.add_patch(patches.Rectangle((position_actuelle, 0), chute, largeur_profil, facecolor=couleur, alpha=alpha, edgecolor='black', linewidth=0.5))
+        ax.add_patch(patches.Rectangle((position_actuelle, 0), chute, largeur_visuelle, facecolor=couleur, alpha=alpha, edgecolor='black', linewidth=0.5))
         
         if chute > 150:
             label = f"♻️ Chute ({chute:.1f} mm)" if est_reutilisable else f"Déchet ({chute:.1f} mm)"
-            ax.text(position_actuelle + chute/2, largeur_profil/2, label, ha='center', va='center', color='#2c3e50', fontsize=6)
+            ax.text(position_actuelle + chute/2, largeur_visuelle/2, label, ha='center', va='center', color='#2c3e50', fontsize=6)
             
     # FORCER L'ÉCHELLE POUR L'ALIGNEMENT DE TOUTES LES BARRES DU PDF
     ax.set_xlim(-10, longueur_standard + 10)
-    ax.set_ylim(0, largeur_profil * 1.3)
+    ax.set_ylim(0, largeur_visuelle * 1.3)
     ax.axis('off')
 
 def generer_rapport_pdf(resultats, nom_projet, metrics):
@@ -164,7 +178,8 @@ def generer_rapport_pdf(resultats, nom_projet, metrics):
                         'idx': idx + 1,
                         'total': len(resultat["barres"]),
                         'barre': barre,
-                        'largeur': resultat['largeur'],
+                        'section_a': resultat.get('section_a', 50.0), # <-- On charge A
+                        'section_b': resultat.get('section_b', 50.0), # <-- On charge B
                         'longueur_standard': resultat['longueur_barre_standard']
                     })
                     
@@ -184,9 +199,10 @@ def generer_rapport_pdf(resultats, nom_projet, metrics):
                     info = lot[j]
                     titre = f"Profil: {info['profil']}   |   Barre {info['idx']} sur {info['total']}   |   Chute: {info['barre']['chute']:.1f} mm"
                     ax.set_title(titre, fontsize=8, loc='left', color='#34495e', pad=5, fontweight='bold')
-                    dessiner_barre_pdf(ax, info['barre'], metrics['epaisseur_lame'], info['largeur'], metrics['seuil_chute'], info['longueur_standard'])
+                    # Transmission de A et B au dessinateur PDF
+                    dessiner_barre_pdf(ax, info['barre'], metrics['epaisseur_lame'], info['section_a'], info['section_b'], metrics['seuil_chute'], info['longueur_standard'])
                 else:
-                    ax.axis('off') # Cache les axes vides en bas de la dernière page
+                    ax.axis('off') 
                     
             pdf.savefig(fig)
             plt.close(fig)
