@@ -76,7 +76,6 @@ with st.sidebar:
                     
                     try:
                         pieces_ignorees = db.sauvegarder_projet(st.session_state.projet_actif, df_prof_actuel, dict_listes)
-                        # Mise à jour de la base locale après succès
                         projet_courant["profils"] = df_prof_actuel
                         
                         if pieces_ignorees:
@@ -173,7 +172,7 @@ with tab3:
         for nom_l in noms_listes:
             df_apercu = projet_courant.get("listes_edited", {}).get(nom_l, projet_courant["listes"][nom_l])
             
-            # Correction du Typage : Somme forcée en format numérique pour éviter le TypeError
+            # Correction Typage Quantité
             qte = int(pd.to_numeric(df_apercu['Quantité'], errors='coerce').fillna(0).sum()) if not df_apercu.empty else 0
             
             st.write(f"- **{nom_l}** : {qte} pièce(s)")
@@ -281,7 +280,7 @@ with tab3:
             )
 
         else:
-            st.info("💡 Tu peux changer la colonne 'Nom de la Liste' d'une pièce pour la déplacer, puis clique sur Valider.")
+            st.info("💡 Vous pouvez tout éditer ici (quantités, longueurs, ou changer de liste). Tout est synchronisé automatiquement !")
             frames_globales = []
             for l_name, df_l in projet_courant["listes"].items():
                 df_temp = projet_courant.get("listes_edited", {}).get(l_name, df_l).copy()
@@ -299,14 +298,12 @@ with tab3:
                 }
             )
             
-            if st.button("✅ Valider les déplacements inter-listes", type="primary"):
-                nouvelles_listes = {}
-                for l_name in noms_listes: 
-                    df_filtre = df_global_edited[df_global_edited["Nom de la Liste"] == l_name].drop(columns=["Nom de la Liste"])
-                    nouvelles_listes[l_name] = df_filtre
-                projet_courant["listes_edited"] = nouvelles_listes
-                st.success("Modifications répercutées avec succès !")
-                st.rerun()
+            # --- SYNCHRONISATION AUTOMATIQUE ---
+            nouvelles_listes = {}
+            for l_name in noms_listes: 
+                df_filtre = df_global_edited[df_global_edited["Nom de la Liste"] == l_name].drop(columns=["Nom de la Liste"])
+                nouvelles_listes[l_name] = df_filtre
+            projet_courant["listes_edited"] = nouvelles_listes
 
 with tab4:
     st.subheader(f"Plans de coupe et Commandes du projet : {st.session_state.projet_actif}")
@@ -356,7 +353,6 @@ with tab4:
                         if total_longueur_barres > 0:
                             rendement = (total_longueur_pieces / total_longueur_barres) * 100
                             
-                            # --- GÉNÉRATION DU PDF A4 EN ARRIÈRE-PLAN ---
                             metrics_pdf = {
                                 "conso": total_longueur_barres / 1000,
                                 "utile": total_longueur_pieces / 1000,
