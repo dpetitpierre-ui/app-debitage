@@ -173,7 +173,7 @@ with tab3:
         for nom_l in noms_listes:
             df_apercu = projet_courant.get("listes_edited", {}).get(nom_l, projet_courant["listes"][nom_l])
             
-            # Conversion sécurisée en nombre pour éviter l'erreur de type lors de l'édition du tableau
+            # Correction du Typage : Somme forcée en format numérique pour éviter le TypeError
             qte = int(pd.to_numeric(df_apercu['Quantité'], errors='coerce').fillna(0).sum()) if not df_apercu.empty else 0
             
             st.write(f"- **{nom_l}** : {qte} pièce(s)")
