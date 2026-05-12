@@ -18,7 +18,6 @@ HEADERS = {
 # -----------------------------------------------------------------------------
 COL_STANDARDS = ["Matériau", "Nom", "Longueur Barre (mm)", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)"]
 COL_PROFILS = ["Nom", "Longueur Barre (mm)", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)", "Couleur", "Longueur Peinture (mm)"]
-# AJOUT : "Coupe sur Section"
 COL_LISTES = ["Référence", "Profil", "Longueur (mm)", "Quantité", "Coupe sur Section", "Angle Gauche (°)", "Angle Droite (°)", "Symétrique"]
 
 # -----------------------------------------------------------------------------
@@ -45,6 +44,7 @@ def _requete_insert(table, data):
 
 # --- FORMATAGE SÉCURISÉ DES DONNÉES ---
 def formater_df_standards(df):
+    """ Formate le catalogue des standards. """
     if df is None or df.empty: return pd.DataFrame(columns=COL_STANDARDS)
     df = df.copy()
     for col in COL_STANDARDS:
@@ -59,6 +59,7 @@ def formater_df_standards(df):
     return df
 
 def formater_df_profils(df):
+    """ Formate les profils d'approvisionnement d'un projet. """
     if df is None or df.empty: return pd.DataFrame(columns=COL_PROFILS)
     df = df.copy()
     for col in COL_PROFILS:
@@ -74,6 +75,7 @@ def formater_df_profils(df):
     return df
 
 def formater_df_listes(df):
+    """ Formate les listes de pièces d'un projet. """
     if df is None or df.empty: return pd.DataFrame(columns=COL_LISTES)
     df = df.copy()
     for col in COL_LISTES:
@@ -82,7 +84,7 @@ def formater_df_listes(df):
     df["Profil"] = df["Profil"].fillna("").astype(str)
     df["Longueur (mm)"] = pd.to_numeric(df["Longueur (mm)"], errors='coerce')
     df["Quantité"] = pd.to_numeric(df["Quantité"], errors='coerce').astype('Int64')
-    df["Coupe sur Section"] = df["Coupe sur Section"].fillna("A").astype(str) # NOUVEAU
+    df["Coupe sur Section"] = df["Coupe sur Section"].fillna("A").astype(str)
     df["Angle Gauche (°)"] = pd.to_numeric(df["Angle Gauche (°)"], errors='coerce')
     df["Angle Droite (°)"] = pd.to_numeric(df["Angle Droite (°)"], errors='coerce')
     df["Symétrique"] = df["Symétrique"].fillna(False).astype(bool)
@@ -166,7 +168,7 @@ def sauvegarder_projet(nom_projet, df_profils, dict_listes):
                     "profil": str(r["Profil"]).strip() if pd.notna(r["Profil"]) else "",
                     "longueur": float(r["Longueur (mm)"]) if pd.notna(r["Longueur (mm)"]) else 0, 
                     "quantite": int(r["Quantité"]) if pd.notna(r["Quantité"]) else 0,
-                    "coupe_section": str(r.get("Coupe sur Section", "A")), # NOUVEAU
+                    "coupe_section": str(r.get("Coupe sur Section", "A")),
                     "angle_g": float(r["Angle Gauche (°)"]) if pd.notna(r["Angle Gauche (°)"]) else 90, 
                     "angle_d": float(r["Angle Droite (°)"]) if pd.notna(r["Angle Droite (°)"]) else 90,
                     "symetrique": bool(r["Symétrique"])
@@ -183,13 +185,11 @@ def sauvegarder_projet(nom_projet, df_profils, dict_listes):
 
     _requete_delete("gp_debit_pieces", "nom_projet", nom_projet)
     
-    # BOUCLIER CTO : Rétrocompatibilité avec Supabase
     if insert_pieces:
         try:
             _requete_insert("gp_debit_pieces", insert_pieces)
         except Exception as e:
             if "coupe_section" in str(e).lower():
-                # La colonne manque dans Supabase, on la retire à la volée et on réessaie
                 for p in insert_pieces:
                     p.pop("coupe_section", None)
                 _requete_insert("gp_debit_pieces", insert_pieces)
@@ -221,7 +221,6 @@ def sauvegarder_standards(df_standards):
             _requete_insert("gp_debit_standards", insert_std)
         except Exception as e:
             if "longueur_barre" in str(e).lower():
-                # La colonne manque dans Supabase, on la retire à la volée et on réessaie
                 for s in insert_std:
                     s.pop("longueur_barre", None)
                 _requete_insert("gp_debit_standards", insert_std)
