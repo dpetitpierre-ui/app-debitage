@@ -167,8 +167,11 @@ with tab3:
         frames_pour_export = []
         for nom_l in noms_listes:
             df_apercu = projet_courant.get("listes_edited", {}).get(nom_l, projet_courant["listes"][nom_l])
-            qte = df_apercu['Quantité'].sum() if not df_apercu.empty else 0
-            st.write(f"- **{nom_l}** : {int(qte)} pièce(s)")
+            
+            # Conversion sécurisée en nombre pour éviter l'erreur de type lors de l'édition du tableau
+            qte = int(pd.to_numeric(df_apercu['Quantité'], errors='coerce').fillna(0).sum()) if not df_apercu.empty else 0
+            
+            st.write(f"- **{nom_l}** : {qte} pièce(s)")
             total_pieces += qte
             
             if not df_apercu.empty:
