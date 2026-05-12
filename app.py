@@ -4,153 +4,30 @@ from ortools.sat.python import cp_model
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import math
-import requests 
+
+# IMPORT DE NOTRE NOUVEAU MODULE DE BASE DE DONNÉES
+import database as db
 
 # -----------------------------------------------------------------------------
-# 1. CONFIGURATION DE LA PAGE ET CONNEXION SUPABASE (REST API)
+# CONFIGURATION DE LA PAGE
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="Optimisation de Débitage Pro", page_icon="🪚", layout="wide")
 
-SUPABASE_URL = "https://wlonolzfkhlyxbojprus.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indsb25vbHpma2hseXhib2pwcnVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQyMjY2ODEsImV4cCI6MjA3OTgwMjY4MX0.FwA0c6iwp3sYfI4zEj7xOK_wJKywA3QKmhY5CVM2XHU"
-NOM_TABLE_SUPABASE = "gp_debit_workspace" 
-
-HEADERS = {
-    "apikey": SUPABASE_KEY,
-    "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type": "application/json"
-}
-
 # Constantes de l'application
-SEUIL_CHUTE = 300.0 # On fixe informatiquement la chute réutilisable à 30cm minimum
-
-COL_STANDARDS = ["Matériau", "Nom", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)"]
-COL_PROFILS = ["Nom", "Longueur Barre (mm)", "Section A (mm)", "Section B (mm)", "Épaisseur (mm)", "Poids (kg/m)", "Couleur", "Longueur Peinture (mm)"]
-COL_LISTES = ["Référence", "Profil", "Longueur (mm)", "Quantité", "Angle Gauche (°)", "Angle Droite (°)", "Symétrique"]
+SEUIL_CHUTE = 300.0 # Chute réutilisable à 30cm minimum
 
 # -----------------------------------------------------------------------------
-# OUTILS DE BASE DE DONNÉES (TRADUCTION INTERFACE <-> SQL)
-# -----------------------------------------------------------------------------
-def requete_get(table):
-    r = requests.get(f"{SUPABASE_URL}/rest/v1/{table}", headers=HEADERS)
-    if r.status_code == 200:
-        return r.json()
-    else:
-        st.error(f"Erreur de lecture ({table}) : {r.text}")
-        return []
-
-def requete_delete(table, colonne, valeur):
-    url = f"{SUPABASE_URL}/rest/v1/{table}?{colonne}=eq.{valeur}"
-    r = requests.delete(url, headers=HEADERS)
-    if r.status_code not in [200, 204]:
-        raise Exception(f"Erreur suppression ({table}) : {r.text}")
-
-def requete_insert(table, data):
-    if not data: return
-    r = requests.post(f"{SUPABASE_URL}/rest/v1/{table}", headers=HEADERS, json=data)
-    if r.status_code not in [200, 201]:
-        raise Exception(f"Erreur insertion ({table}) : {r.text}")
-
-def formater_df_standards(df):
-    if df is None or df.empty: return pd.DataFrame(columns=COL_STANDARDS)
-    df = df.copy()
-    for col in COL_STANDARDS:
-        if col not in df.columns: df[col] = None
-            
-    df["Matériau"] = df["Matériau"].fillna("").astype(str)
-    df["Nom"] = df["Nom"].fillna("").astype(str)
-    df["Section A (mm)"] = pd.to_numeric(df["Section A (mm)"], errors='coerce')
-    df["Section B (mm)"] = pd.to_numeric(df["Section B (mm)"], errors='coerce')
-    df["Épaisseur (mm)"] = pd.to_numeric(df["Épaisseur (mm)"], errors='coerce')
-    df["Poids (kg/m)"] = pd.to_numeric(df["Poids (kg/m)"], errors='coerce')
-    return df
-
-def formater_df_profils(df):
-    if df is None or df.empty: return pd.DataFrame(columns=COL_PROFILS)
-    df = df.copy()
-    for col in COL_PROFILS:
-        if col not in df.columns: df[col] = None
-            
-    df["Nom"] = df["Nom"].fillna("").astype(str)
-    df["Longueur Barre (mm)"] = pd.to_numeric(df["Longueur Barre (mm)"], errors='coerce')
-    df["Section A (mm)"] = pd.to_numeric(df["Section A (mm)"], errors='coerce')
-    df["Section B (mm)"] = pd.to_numeric(df["Section B (mm)"], errors='coerce')
-    df["Épaisseur (mm)"] = pd.to_numeric(df["Épaisseur (mm)"], errors='coerce')
-    df["Poids (kg/m)"] = pd.to_numeric(df["Poids (kg/m)"], errors='coerce')
-    df["Couleur"] = df["Couleur"].fillna("").astype(str)
-    df["Longueur Peinture (mm)"] = pd.to_numeric(df["Longueur Peinture (mm)"], errors='coerce')
-    return df
-
-def formater_df_listes(df):
-    if df is None or df.empty: return pd.DataFrame(columns=COL_LISTES)
-    df = df.copy()
-    for col in COL_LISTES:
-        if col not in df.columns: df[col] = None
-            
-    df["Référence"] = df["Référence"].fillna("").astype(str)
-    df["Profil"] = df["Profil"].fillna("").astype(str)
-    df["Longueur (mm)"] = pd.to_numeric(df["Longueur (mm)"], errors='coerce')
-    df["Quantité"] = pd.to_numeric(df["Quantité"], errors='coerce').astype('Int64')
-    df["Angle Gauche (°)"] = pd.to_numeric(df["Angle Gauche (°)"], errors='coerce')
-    df["Angle Droite (°)"] = pd.to_numeric(df["Angle Droite (°)"], errors='coerce')
-    df["Symétrique"] = df["Symétrique"].fillna(False).astype(bool)
-    return df
-
-# -----------------------------------------------------------------------------
-# CHARGEMENT DEPUIS SUPABASE
+# CHARGEMENT DEPUIS SUPABASE (Désormais délégué à database.py)
 # -----------------------------------------------------------------------------
 if 'workspace' not in st.session_state:
-    try:
-        db_standards = requete_get("gp_debit_standards")
-        db_projets = requete_get("gp_debit_projets")
-        db_profils = requete_get("gp_debit_profils")
-        db_pieces = requete_get("gp_debit_pieces")
+    with st.spinner("Connexion à la base de données..."):
+        df_standards_base, workspace = db.charger_donnees_initiales()
         
-        if db_standards:
-            std_data = [{"Matériau": r.get("materiau", ""), "Nom": r["nom_profil"], "Section A (mm)": r.get("section_a"), "Section B (mm)": r.get("section_b"), "Épaisseur (mm)": r.get("epaisseur"), "Poids (kg/m)": r.get("poids_ml")} for r in db_standards]
-            st.session_state.df_standards_base = formater_df_standards(pd.DataFrame(std_data))
-        else:
-            st.session_state.df_standards_base = pd.DataFrame(columns=COL_STANDARDS)
-            
-        if db_projets:
-            new_workspace = {}
-            for proj in db_projets:
-                nom_p = proj["nom_projet"]
-                
-                prof_data = [{"Nom": p["nom_profil"], "Longueur Barre (mm)": p.get("longueur"), "Section A (mm)": p.get("section_a"), "Section B (mm)": p.get("section_b"), "Épaisseur (mm)": p.get("epaisseur"), "Poids (kg/m)": p.get("poids_ml"), "Couleur": p.get("couleur", ""), "Longueur Peinture (mm)": p.get("longueur_peinture")} for p in db_profils if p["nom_projet"] == nom_p]
-                
-                pieces_p = [p for p in db_pieces if p["nom_projet"] == nom_p]
-                listes_dict = {}
-                
-                if pieces_p:
-                    df_pieces_temp = pd.DataFrame([{"Nom de Liste": pc["nom_liste"], "Référence": pc["reference"], "Profil": pc["profil"], "Longueur (mm)": pc["longueur"], "Quantité": pc["quantite"], "Angle Gauche (°)": pc["angle_g"], "Angle Droite (°)": pc["angle_d"], "Symétrique": pc["symetrique"]} for pc in pieces_p])
-                    for nom_l in df_pieces_temp["Nom de Liste"].unique():
-                        listes_dict[nom_l] = formater_df_listes(df_pieces_temp[df_pieces_temp["Nom de Liste"] == nom_l])
-                else:
-                    listes_dict["Liste 1"] = formater_df_listes(pd.DataFrame())
-                    
-                new_workspace[nom_p] = {
-                    "profils": formater_df_profils(pd.DataFrame(prof_data)),
-                    "listes": listes_dict
-                }
-                
-            st.session_state.workspace = new_workspace
-            st.session_state.projet_actif = list(new_workspace.keys())[0]
-            st.session_state.liste_active = list(new_workspace[st.session_state.projet_actif]["listes"].keys())[0]
-            st.toast("✅ Base de données connectée", icon="☁️")
-        else:
-            raise Exception("Base vide")
-            
-    except Exception as e:
-        st.session_state.df_standards_base = formater_df_standards(pd.DataFrame([{"Matériau": "ACIER", "Nom": "Tube 50x50", "Section A (mm)": 50.0, "Section B (mm)": 50.0, "Épaisseur (mm)": 2.0, "Poids (kg/m)": None}]))
-        st.session_state.workspace = {
-            "Nouveau Projet": {
-                "profils": formater_df_profils(pd.DataFrame()),
-                "listes": {"Liste 1": formater_df_listes(pd.DataFrame())}
-            }
-        }
-        st.session_state.projet_actif = "Nouveau Projet"
-        st.session_state.liste_active = "Liste 1"
+        st.session_state.df_standards_base = df_standards_base
+        st.session_state.workspace = workspace
+        st.session_state.projet_actif = list(workspace.keys())[0]
+        st.session_state.liste_active = list(workspace[st.session_state.projet_actif]["listes"].keys())[0] if workspace[st.session_state.projet_actif]["listes"] else None
+        st.toast("✅ Base de données connectée", icon="☁️")
 
 # -----------------------------------------------------------------------------
 # FONCTION D'OPTIMISATION MATHÉMATIQUE (TASSEMENT MAXIMAL)
@@ -197,8 +74,6 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
             resultats_finaux[nom_profil] = "LONGUEUR_MANQUANTE"
             continue
             
-        # 1. TRI INTELLIGENT : On range les pièces de la plus grande à la plus petite.
-        # Cela force naturellement l'IA à caler les gros morceaux d'abord, puis à boucher les trous avec les petits.
         pieces_liste.sort(key=lambda item: item['longueur'], reverse=True)
 
         qte_barres_a_fournir_ia = len(pieces_liste)
@@ -228,9 +103,6 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
             capacite = int(barres_liste[j]['longueur'] * 10)
             model.Add(sum((int(pieces_liste[i]['longueur'] * 10) + lame) * x[i, j] for i in range(len(pieces_liste))) <= (capacite + lame) * y[j])
 
-        # 2. LOI DE GRAVITÉ (TASSEMENT À GAUCHE)
-        # L'objectif est double : On minimise le nombre de barres (Priorité Absolue)
-        # ET on ajoute une micro-pénalité à chaque fois qu'on met une pièce dans une barre lointaine (Tassement)
         poids_lourd_barre = max(10000, len(pieces_liste) * len(barres_liste) + 100)
         
         termes_objectif = []
@@ -271,7 +143,7 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame):
     return resultats_finaux
 
 # -----------------------------------------------------------------------------
-# FONCTION DE DESSIN (ULTRA COMPACTE)
+# FONCTION DE DESSIN
 # -----------------------------------------------------------------------------
 def dessiner_barre(barre_info, epaisseur_lame, largeur_profil, seuil_chute):
     fig, ax = plt.subplots(figsize=(20, 0.4)) 
@@ -315,7 +187,7 @@ def dessiner_barre(barre_info, epaisseur_lame, largeur_profil, seuil_chute):
     return fig
 
 # -----------------------------------------------------------------------------
-# 2. MENU LATÉRAL
+# MENU LATÉRAL
 # -----------------------------------------------------------------------------
 with st.sidebar:
     st.header("📁 Navigation")
@@ -332,7 +204,7 @@ with st.sidebar:
         nouveau_projet = st.text_input("Nom du nouveau projet")
         if st.button("Créer le projet") and nouveau_projet:
             if nouveau_projet not in st.session_state.workspace:
-                st.session_state.workspace[nouveau_projet] = {"profils": formater_df_profils(pd.DataFrame()), "listes": {"Liste 1": formater_df_listes(pd.DataFrame())}}
+                st.session_state.workspace[nouveau_projet] = {"profils": db.formater_df_profils(pd.DataFrame()), "listes": {"Liste 1": db.formater_df_listes(pd.DataFrame())}}
                 st.session_state.projet_actif = nouveau_projet
                 st.session_state.liste_active = "Liste 1"
                 st.rerun()
@@ -340,56 +212,27 @@ with st.sidebar:
                 st.error("Ce nom existe déjà.")
 
     st.divider()
-    st.header("☁️ Sauvegarde Multi-Tables")
+    st.header("☁️ Sauvegarde")
     
     if st.button("☁️ Enregistrer le projet courant", type="primary"):
         with st.spinner("Envoi vers Supabase..."):
             try:
                 nom_p = st.session_state.projet_actif
+                projet_courant = st.session_state.workspace[nom_p]
                 
-                url_proj = f"{SUPABASE_URL}/rest/v1/gp_debit_projets"
-                r_proj = requests.post(url_proj, headers={**HEADERS, "Prefer": "resolution=merge-duplicates"}, params={"on_conflict":"nom_projet"}, json=[{"nom_projet": nom_p}])
-                if r_proj.status_code not in [200, 201]: raise Exception(f"Erreur table projets : {r_proj.text}")
+                # Extraction propre des données éditées par l'utilisateur
+                df_prof = projet_courant.get("profils_edited", projet_courant["profils"])
+                dict_listes = {}
+                for l_name, l_base in projet_courant["listes"].items():
+                    dict_listes[l_name] = projet_courant.get("listes_edited", {}).get(l_name, l_base)
                 
-                df_prof = st.session_state.workspace[nom_p].get("profils_edited", st.session_state.workspace[nom_p]["profils"])
-                requete_delete("gp_debit_profils", "nom_projet", nom_p)
+                # Appel au nouveau module de base de données
+                pieces_ignorees = db.sauvegarder_projet(nom_p, df_prof, dict_listes)
                 
-                insert_profils = []
-                for _, r in df_prof.iterrows():
-                    nom_profil = str(r["Nom"]).strip()
-                    if nom_profil != "" and nom_profil != "nan" and nom_profil != "None":
-                        insert_profils.append({
-                            "nom_projet": nom_p, "nom_profil": nom_profil, 
-                            "longueur": float(r["Longueur Barre (mm)"]) if pd.notna(r["Longueur Barre (mm)"]) else 0,
-                            "section_a": float(r["Section A (mm)"]) if pd.notna(r["Section A (mm)"]) else None,
-                            "section_b": float(r["Section B (mm)"]) if pd.notna(r["Section B (mm)"]) else None,
-                            "epaisseur": float(r["Épaisseur (mm)"]) if pd.notna(r["Épaisseur (mm)"]) else None,
-                            "poids_ml": float(r["Poids (kg/m)"]) if pd.notna(r["Poids (kg/m)"]) else None,
-                            "couleur": str(r["Couleur"]) if pd.notna(r["Couleur"]) else "",
-                            "longueur_peinture": float(r["Longueur Peinture (mm)"]) if pd.notna(r["Longueur Peinture (mm)"]) else None
-                        })
-                requete_insert("gp_debit_profils", insert_profils)
-
-                requete_delete("gp_debit_pieces", "nom_projet", nom_p)
-                insert_pieces = []
-                for l_name, l_base in st.session_state.workspace[nom_p]["listes"].items():
-                    df_liste = st.session_state.workspace[nom_p].get("listes_edited", {}).get(l_name, l_base)
-                    for _, r in df_liste.iterrows():
-                        ref = str(r["Référence"]).strip()
-                        if ref != "" and ref != "nan" and ref != "None":
-                            insert_pieces.append({
-                                "nom_projet": nom_p, "nom_liste": l_name, "reference": ref, 
-                                "profil": str(r["Profil"]).strip() if pd.notna(r["Profil"]) else "",
-                                "longueur": float(r["Longueur (mm)"]) if pd.notna(r["Longueur (mm)"]) else 0, 
-                                "quantite": int(r["Quantité"]) if pd.notna(r["Quantité"]) else 0,
-                                "angle_g": float(r["Angle Gauche (°)"]) if pd.notna(r["Angle Gauche (°)"]) else 90, 
-                                "angle_d": float(r["Angle Droite (°)"]) if pd.notna(r["Angle Droite (°)"]) else 90,
-                                "symetrique": bool(r["Symétrique"])
-                            })
-                        elif pd.notna(r["Longueur (mm)"]) or pd.notna(r["Quantité"]):
-                            st.warning(f"⚠️ Une pièce de la liste '{l_name}' a été ignorée car la 'Référence' est vide.")
-                            
-                requete_insert("gp_debit_pieces", insert_pieces)
+                if pieces_ignorees:
+                    for nom_l in set(pieces_ignorees):
+                        st.warning(f"⚠️ Une pièce de la liste '{nom_l}' a été ignorée car la 'Référence' est vide.")
+                        
                 st.success("Projet sauvegardé avec succès !")
             except Exception as e:
                 st.error(f"❌ Erreur Base de données : {e}")
@@ -399,7 +242,7 @@ with st.sidebar:
     epaisseur_lame = st.number_input("Lame (mm)", min_value=0.0, value=3.0, step=0.1)
 
 # -----------------------------------------------------------------------------
-# 3. CORPS DE L'APPLICATION
+# CORPS DE L'APPLICATION
 # -----------------------------------------------------------------------------
 st.title(f"🪚 Projet : {st.session_state.projet_actif}")
 projet_courant = st.session_state.workspace[st.session_state.projet_actif]
@@ -418,25 +261,12 @@ with tab1:
         }
     )
     if st.button("Sauvegarder Standards"):
-        try:
-            r_del = requests.delete(f"{SUPABASE_URL}/rest/v1/gp_debit_standards?nom_profil=not.is.null", headers=HEADERS)
-            if r_del.status_code not in [200, 204]: raise Exception(f"Delete fail: {r_del.text}")
-            
-            insert_std = []
-            for _, r in st.session_state.df_standards_edited.iterrows():
-                if pd.notna(r["Nom"]) and str(r["Nom"]).strip() != "":
-                    insert_std.append({
-                        "nom_profil": str(r["Nom"]).strip(),
-                        "materiau": str(r["Matériau"]) if pd.notna(r["Matériau"]) else "ACIER",
-                        "section_a": float(r["Section A (mm)"]) if pd.notna(r["Section A (mm)"]) else 0,
-                        "section_b": float(r["Section B (mm)"]) if pd.notna(r["Section B (mm)"]) else 0,
-                        "epaisseur": float(r["Épaisseur (mm)"]) if pd.notna(r["Épaisseur (mm)"]) else None,
-                        "poids_ml": float(r["Poids (kg/m)"]) if pd.notna(r["Poids (kg/m)"]) else None
-                    })
-            requete_insert("gp_debit_standards", insert_std)
-            st.toast("Standards sauvegardés", icon="✅")
-        except Exception as e:
-            st.error(f"Erreur Standards : {e}")
+        with st.spinner("Sauvegarde en cours..."):
+            try:
+                db.sauvegarder_standards(st.session_state.df_standards_edited)
+                st.toast("Standards sauvegardés", icon="✅")
+            except Exception as e:
+                st.error(f"Erreur Standards : {e}")
 
 with tab2:
     st.subheader(f"Profils (Barres d'approvisionnement) : {st.session_state.projet_actif}")
@@ -461,7 +291,7 @@ with tab3:
             nouvelle_liste = st.text_input("Nom de la nouvelle liste")
             if st.button("Ajouter Liste") and nouvelle_liste:
                 if nouvelle_liste not in projet_courant["listes"]:
-                    projet_courant["listes"][nouvelle_liste] = formater_df_listes(pd.DataFrame())
+                    projet_courant["listes"][nouvelle_liste] = db.formater_df_listes(pd.DataFrame())
                     st.session_state.liste_active = nouvelle_liste
                     st.rerun()
                 else:
@@ -473,7 +303,7 @@ with tab3:
             if st.button("Importer les pièces", type="primary") and fichier_excel:
                 try:
                     df_excel = pd.read_excel(fichier_excel)
-                    df_formate = formater_df_listes(df_excel)
+                    df_formate = db.formater_df_listes(df_excel)
                     df_formate = df_formate.dropna(subset=["Référence", "Profil"], how='all')
                     
                     liste_actuelle = st.session_state.liste_active
@@ -537,6 +367,8 @@ with tab4:
                     st.info("Aucune pièce à optimiser dans ces listes.")
                 else:
                     profils_a_utiliser = projet_courant.get("profils_edited", projet_courant["profils"])
+                    
+                    # APPEL À L'OPTIMISEUR (Reste intact pour l'instant)
                     resultats = optimiser_projet_complet(df_pieces_global, profils_a_utiliser, epaisseur_lame)
                     
                     if not resultats:
@@ -586,7 +418,6 @@ with tab4:
                                     with st.expander(f"Barre {idx+1} (Longueur: {barre['barre_longueur']} mm) - Chute : {barre['chute']:.1f} mm", expanded=True):
                                         st.pyplot(dessiner_barre(barre, epaisseur_lame, resultat["largeur"], SEUIL_CHUTE), use_container_width=True)
                                 
-                                # BILAN EXPLICITE DES CHUTES REUTILISABLES
                                 chutes_utiles = [b['chute'] for b in resultat["barres"] if b['chute'] >= SEUIL_CHUTE]
                                 if chutes_utiles:
                                     chutes_utiles.sort(reverse=True)
