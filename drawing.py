@@ -163,40 +163,44 @@ def generer_rapport_pdf(resultats, nom_projet, metrics):
         
         commandes = sorted(commandes, key=lambda x: x['profil'])
         
-        items_par_page = 35
-        nb_pages_resume = max(1, math.ceil(len(commandes) / items_par_page))
+        # 2. GÉNÉRATION DES PAGES DE BORDEREAU ET RÉSUMÉ (Pagination Dynamique)
+        cmd_idx = 0
+        page_idx = 0
         
-        # 2. GÉNÉRATION DES PAGES DE BORDEREAU ET RÉSUMÉ
-        for page_idx in range(nb_pages_resume):
+        while True:
             fig_resume, ax = plt.subplots(figsize=(8.27, 11.69))
             ax.axis('off')
             
-            # --- BANDEAU D'EN-TÊTE ---
-            ax.add_patch(patches.Rectangle((0, 0.90), 1, 0.10, facecolor='#1f2937', transform=ax.transAxes, clip_on=False))
-            ax.text(0.05, 0.95, "BORDEREAU D'APPROVISIONNEMENT & COUPE", fontsize=16, fontweight='bold', color='white', transform=ax.transAxes)
-            ax.text(0.05, 0.92, f"Projet : {nom_projet}", fontsize=12, color='#9ca3af', transform=ax.transAxes)
+            # --- BANDEAU D'EN-TÊTE EXACTEMENT IDENTIQUE AUX COUPES ---
+            rect = patches.Rectangle((0, 0.96), 1, 0.04, facecolor='#1f2937', transform=fig_resume.transFigure, clip_on=False)
+            fig_resume.patches.append(rect)
+            fig_resume.text(0.05, 0.972, f"BORDEREAU D'APPROVISIONNEMENT & COUPE - {nom_projet}", fontsize=11, fontweight='bold', color='white')
             
-            y_pos = 0.83
+            y_pos = 0.90
             
             # --- BLOC STATISTIQUES (Seulement sur la première page) ---
             if page_idx == 0:
-                ax.text(0.05, y_pos, "📊 RÉSUMÉ GLOBAL DE MATIÈRE", fontsize=12, fontweight='bold', color='#2563eb', transform=ax.transAxes)
+                ax.text(0.05, y_pos, "RÉSUMÉ GLOBAL DE MATIÈRE", fontsize=12, fontweight='bold', color='#2563eb', transform=ax.transAxes)
                 y_pos -= 0.04
                 
-                # Positions X strictes pour éviter tout écrasement (0.05, 0.38, 0.70)
-                ax.text(0.05, y_pos, "Matière Consommée :", fontsize=10, color='#4b5563', transform=ax.transAxes)
-                ax.text(0.24, y_pos, f"{metrics.get('conso', 0):.2f} m", fontsize=10, fontweight='bold', transform=ax.transAxes)
+                # Tabulation alignée sans symbole
+                ax.text(0.05, y_pos, "MATIÈRE À COMMANDER", fontsize=10, fontweight='bold', color='#4b5563', transform=ax.transAxes)
+                ax.text(0.35, y_pos, ":", fontsize=10, fontweight='bold', color='#4b5563', transform=ax.transAxes)
+                ax.text(0.38, y_pos, f"{metrics.get('conso', 0):.2f} mètres", fontsize=10, fontweight='bold', transform=ax.transAxes)
+                y_pos -= 0.03
                 
-                ax.text(0.38, y_pos, "Matière Utile :", fontsize=10, color='#4b5563', transform=ax.transAxes)
-                ax.text(0.51, y_pos, f"{metrics.get('utile', 0):.2f} m", fontsize=10, fontweight='bold', transform=ax.transAxes)
+                ax.text(0.05, y_pos, "MATIÈRE UTILE", fontsize=10, fontweight='bold', color='#4b5563', transform=ax.transAxes)
+                ax.text(0.35, y_pos, ":", fontsize=10, fontweight='bold', color='#4b5563', transform=ax.transAxes)
+                ax.text(0.38, y_pos, f"{metrics.get('utile', 0):.2f} mètres", fontsize=10, fontweight='bold', transform=ax.transAxes)
+                y_pos -= 0.03
                 
-                ax.text(0.70, y_pos, "Rendement :", fontsize=10, color='#4b5563', transform=ax.transAxes)
-                ax.text(0.83, y_pos, f"{metrics.get('rendement', 0):.1f} %", fontsize=10, fontweight='bold', color='#16a34a', transform=ax.transAxes)
-                
+                ax.text(0.05, y_pos, "RENDEMENT", fontsize=10, fontweight='bold', color='#4b5563', transform=ax.transAxes)
+                ax.text(0.35, y_pos, ":", fontsize=10, fontweight='bold', color='#4b5563', transform=ax.transAxes)
+                ax.text(0.38, y_pos, f"{metrics.get('rendement', 0):.1f} %", fontsize=10, fontweight='bold', color='#16a34a', transform=ax.transAxes)
                 y_pos -= 0.06
                 
                 # Titre Section Peinture
-                ax.text(0.05, y_pos, "🎨 SURFACES À PEINDRE PAR FINITION", fontsize=12, fontweight='bold', color='#2563eb', transform=ax.transAxes)
+                ax.text(0.05, y_pos, "SURFACES À PEINDRE PAR FINITION", fontsize=12, fontweight='bold', color='#2563eb', transform=ax.transAxes)
                 y_pos -= 0.04
                 
                 peintures = metrics.get('peinture_par_couleur', {})
@@ -205,15 +209,15 @@ def generer_rapport_pdf(resultats, nom_projet, metrics):
                     y_pos -= 0.03
                 else:
                     for coul, surf in peintures.items():
-                        # Strict respect de la demande : Affichage de la valeur brute (ex: 1)
                         label_coul = f"{coul}" if coul else "Brut / Sans finition"
-                        ax.text(0.05, y_pos, f"• {label_coul}", fontsize=10, fontweight='bold', color='#111827', transform=ax.transAxes)
-                        ax.text(0.20, y_pos, f":   {surf:.2f} m²", fontsize=10, transform=ax.transAxes)
+                        ax.text(0.05, y_pos, label_coul, fontsize=10, fontweight='bold', color='#111827', transform=ax.transAxes)
+                        ax.text(0.35, y_pos, ":", fontsize=10, fontweight='bold', color='#111827', transform=ax.transAxes)
+                        ax.text(0.38, y_pos, f"{surf:.2f} m²", fontsize=10, fontweight='bold', transform=ax.transAxes)
                         y_pos -= 0.025
                     y_pos -= 0.02
 
             # --- TABLEAU BORDEREAU DE COMMANDE ---
-            ax.text(0.05, y_pos, "📦 RÉCAPITULATIF DES COMMANDES", fontsize=12, fontweight='bold', color='#2563eb', transform=ax.transAxes)
+            ax.text(0.05, y_pos, "RÉCAPITULATIF DES COMMANDES", fontsize=12, fontweight='bold', color='#2563eb', transform=ax.transAxes)
             y_pos -= 0.02
             
             # En-tête du tableau (Fond gris clair moderne)
@@ -224,12 +228,11 @@ def generer_rapport_pdf(resultats, nom_projet, metrics):
             ax.text(0.90, y_pos, "QTÉ", fontsize=9, fontweight='bold', color='#374151', ha='center', transform=ax.transAxes)
             y_pos -= 0.03
             
-            # Lignes du tableau
-            start_idx = page_idx * items_par_page
-            end_idx = min(start_idx + items_par_page, len(commandes))
-            
-            for i, cmd in enumerate(commandes[start_idx:end_idx]):
-                if i % 2 == 0:
+            # Remplissage des Lignes (avec vérification d'espace disponible)
+            row_count = 0
+            while cmd_idx < len(commandes) and y_pos > 0.06:
+                cmd = commandes[cmd_idx]
+                if row_count % 2 == 0:
                     ax.add_patch(patches.Rectangle((0.05, y_pos-0.012), 0.9, 0.024, facecolor='#f9fafb', edgecolor='none', transform=ax.transAxes, clip_on=False))
                 
                 ax.text(0.06, y_pos, str(cmd['profil']), fontsize=9, color='#111827', transform=ax.transAxes)
@@ -242,20 +245,93 @@ def generer_rapport_pdf(resultats, nom_projet, metrics):
                 
                 # Ligne séparatrice fine
                 ax.plot([0.05, 0.95], [y_pos-0.012, y_pos-0.012], color='#e5e7eb', lw=0.5, transform=ax.transAxes)
+                
                 y_pos -= 0.024
+                cmd_idx += 1
+                row_count += 1
 
             # Traçabilité et pagination
             ax.text(0.05, 0.02, f"Généré le {date_generation}", fontsize=8, color='#9ca3af', transform=ax.transAxes)
             ax.text(0.95, 0.02, f"Page {page_actuelle}", fontsize=8, color='#9ca3af', ha='right', transform=ax.transAxes)
-            page_actuelle += 1
             
             pdf.savefig(fig_resume)
             plt.close(fig_resume)
+            
+            page_actuelle += 1
+            page_idx += 1
+            
+            if cmd_idx >= len(commandes):
+                break
         
-        # 3. GÉNÉRATION DES PLANS DE COUPE
-        barres_a_dessiner = []
+        # 3. GÉNÉRATION DES PAGES DE DÉBITAGE BRUT ET PLANS DE COUPE PAR PROFIL
         for nom_profil, resultat in resultats.items():
             if type(resultat) == dict and resultat["statut"] == "SUCCES":
+                
+                # -- 3.A. AGRÉGATION POUR LA LISTE DE DÉBITAGE BRUTE --
+                pieces_agg = {}
+                for barre in resultat['barres']:
+                    for p in barre['pieces']:
+                        key = (p['ref'], p['longueur'], p.get('angle_g', 90.0), p.get('angle_d', 90.0), p.get('coupe_section', 'A'))
+                        pieces_agg[key] = pieces_agg.get(key, 0) + 1
+                        
+                liste_brute = [{'ref':k[0], 'longueur':k[1], 'ang_g':k[2], 'ang_d':k[3], 'section':k[4], 'qte':v} for k, v in pieces_agg.items()]
+                liste_brute.sort(key=lambda x: (-x['longueur'], x['ref']))
+                
+                # -- 3.B. IMPRESSION DE LA LISTE DE DÉBITAGE BRUTE (Pagination dynamique) --
+                piece_idx = 0
+                while True:
+                    fig_liste, ax_liste = plt.subplots(figsize=(8.27, 11.69))
+                    ax_liste.axis('off')
+                    
+                    # Bandeau d'en-tête
+                    rect = patches.Rectangle((0, 0.96), 1, 0.04, facecolor='#1f2937', transform=fig_liste.transFigure, clip_on=False)
+                    fig_liste.patches.append(rect)
+                    fig_liste.text(0.05, 0.972, f"LISTE DE DÉBITAGE BRUTE - {nom_projet}", fontsize=11, fontweight='bold', color='white')
+                    
+                    y_pos = 0.90
+                    ax_liste.text(0.05, y_pos, f"PROFIL : {nom_profil}", fontsize=12, fontweight='bold', color='#2563eb', transform=ax_liste.transAxes)
+                    y_pos -= 0.03
+                    
+                    # En-tête du tableau
+                    ax_liste.add_patch(patches.Rectangle((0.05, y_pos-0.01), 0.9, 0.025, facecolor='#f3f4f6', edgecolor='#d1d5db', linewidth=0.5, transform=ax_liste.transAxes, clip_on=False))
+                    ax_liste.text(0.06, y_pos, "RÉFÉRENCE", fontsize=9, fontweight='bold', color='#374151', transform=ax_liste.transAxes)
+                    ax_liste.text(0.35, y_pos, "LONGUEUR", fontsize=9, fontweight='bold', color='#374151', transform=ax_liste.transAxes)
+                    ax_liste.text(0.50, y_pos, "ANGLE G", fontsize=9, fontweight='bold', color='#374151', transform=ax_liste.transAxes)
+                    ax_liste.text(0.65, y_pos, "ANGLE D", fontsize=9, fontweight='bold', color='#374151', transform=ax_liste.transAxes)
+                    ax_liste.text(0.80, y_pos, "SECTION", fontsize=9, fontweight='bold', color='#374151', transform=ax_liste.transAxes)
+                    ax_liste.text(0.93, y_pos, "QTÉ", fontsize=9, fontweight='bold', color='#374151', ha='center', transform=ax_liste.transAxes)
+                    y_pos -= 0.03
+                    
+                    row_count = 0
+                    while piece_idx < len(liste_brute) and y_pos > 0.06:
+                        pc = liste_brute[piece_idx]
+                        if row_count % 2 == 0:
+                            ax_liste.add_patch(patches.Rectangle((0.05, y_pos-0.012), 0.9, 0.024, facecolor='#f9fafb', edgecolor='none', transform=ax_liste.transAxes, clip_on=False))
+                            
+                        ax_liste.text(0.06, y_pos, str(pc['ref']), fontsize=9, color='#111827', transform=ax_liste.transAxes)
+                        ax_liste.text(0.35, y_pos, f"{pc['longueur']:g} mm", fontsize=9, color='#111827', transform=ax_liste.transAxes)
+                        ax_liste.text(0.50, y_pos, f"{pc['ang_g']:g}°", fontsize=9, color='#111827', transform=ax_liste.transAxes)
+                        ax_liste.text(0.65, y_pos, f"{pc['ang_d']:g}°", fontsize=9, color='#111827', transform=ax_liste.transAxes)
+                        ax_liste.text(0.80, y_pos, str(pc['section']), fontsize=9, color='#111827', transform=ax_liste.transAxes)
+                        ax_liste.text(0.93, y_pos, f"{pc['qte']}", fontsize=10, fontweight='bold', color='#111827', ha='center', transform=ax_liste.transAxes)
+                        
+                        ax_liste.plot([0.05, 0.95], [y_pos-0.012, y_pos-0.012], color='#e5e7eb', lw=0.5, transform=ax_liste.transAxes)
+                        y_pos -= 0.024
+                        piece_idx += 1
+                        row_count += 1
+                        
+                    ax_liste.text(0.05, 0.02, f"Généré le {date_generation}", fontsize=8, color='#9ca3af', transform=ax_liste.transAxes)
+                    ax_liste.text(0.95, 0.02, f"Page {page_actuelle}", fontsize=8, color='#9ca3af', ha='right', transform=ax_liste.transAxes)
+                    
+                    pdf.savefig(fig_liste)
+                    plt.close(fig_liste)
+                    page_actuelle += 1
+                    
+                    if piece_idx >= len(liste_brute):
+                        break
+
+                # -- 3.C. IMPRESSION DES SCHÉMAS DE COUPE --
+                barres_a_dessiner = []
                 for idx, barre in enumerate(resultat["barres"]):
                     barres_a_dessiner.append({
                         'profil': nom_profil,
@@ -266,49 +342,48 @@ def generer_rapport_pdf(resultats, nom_projet, metrics):
                         'section_b': resultat.get('section_b', 50.0),
                         'longueur_standard': resultat['longueur_barre_standard']
                     })
+                        
+                barres_par_page = 10
+                for i in range(0, len(barres_a_dessiner), barres_par_page):
+                    lot = barres_a_dessiner[i:i+barres_par_page]
+                    fig, axes = plt.subplots(nrows=barres_par_page, ncols=1, figsize=(8.27, 11.69))
                     
-        barres_par_page = 10
-        for i in range(0, len(barres_a_dessiner), barres_par_page):
-            lot = barres_a_dessiner[i:i+barres_par_page]
-            fig, axes = plt.subplots(nrows=barres_par_page, ncols=1, figsize=(8.27, 11.69))
-            
-            if barres_par_page == 1: axes = [axes]
-            
-            fig.subplots_adjust(left=0.05, right=0.95, top=0.91, bottom=0.06, hspace=0.8)
-            
-            rect = patches.Rectangle((0, 0.96), 1, 0.04, facecolor='#1f2937', transform=fig.transFigure, clip_on=False)
-            fig.patches.append(rect)
-            fig.text(0.05, 0.972, f"PLANS DE COUPE - {nom_projet}", fontsize=11, fontweight='bold', color='white')
-            
-            # Traçabilité bas de page
-            fig.text(0.05, 0.02, f"Généré le {date_generation}", fontsize=8, color='#9ca3af')
-            fig.text(0.95, 0.02, f"Page {page_actuelle}", fontsize=8, color='#9ca3af', ha='right')
-            
-            for j in range(barres_par_page):
-                ax = axes[j]
-                if j < len(lot):
-                    info = lot[j]
+                    if barres_par_page == 1: axes = [axes]
                     
-                    faces = set()
-                    for p in info['barre']['pieces']:
-                        section = p.get('coupe_section', 'A')
-                        face = info['section_b'] if section == 'B' else info['section_a']
-                        if pd.notna(face) and face > 0:
-                            faces.add(f"{face:g}")
+                    fig.subplots_adjust(left=0.05, right=0.95, top=0.91, bottom=0.06, hspace=0.8)
+                    
+                    rect = patches.Rectangle((0, 0.96), 1, 0.04, facecolor='#1f2937', transform=fig.transFigure, clip_on=False)
+                    fig.patches.append(rect)
+                    fig.text(0.05, 0.972, f"PLANS DE COUPE - {nom_projet}", fontsize=11, fontweight='bold', color='white')
+                    
+                    fig.text(0.05, 0.02, f"Généré le {date_generation}", fontsize=8, color='#9ca3af')
+                    fig.text(0.95, 0.02, f"Page {page_actuelle}", fontsize=8, color='#9ca3af', ha='right')
+                    
+                    for j in range(barres_par_page):
+                        ax = axes[j]
+                        if j < len(lot):
+                            info = lot[j]
                             
-                    face_str = " & ".join(sorted(faces))
-                    face_info = f"   |   Face(s) de coupe: {face_str} mm" if face_str else ""
-                    
-                    titre = f"Profil: {info['profil']}{face_info}   |   Barre {info['idx']} sur {info['total']}   |   Chute: {info['barre']['chute']:.1f} mm"
-                    
-                    ax.set_title(titre, fontsize=8, loc='left', color='#374151', pad=5, fontweight='bold')
-                    dessiner_barre_pdf(ax, info['barre'], metrics['epaisseur_lame'], info['section_a'], info['section_b'], metrics['seuil_chute'], info['longueur_standard'])
-                else:
-                    ax.axis('off') 
-                    
-            pdf.savefig(fig)
-            plt.close(fig)
-            page_actuelle += 1
+                            faces = set()
+                            for p in info['barre']['pieces']:
+                                section = p.get('coupe_section', 'A')
+                                face = info['section_b'] if section == 'B' else info['section_a']
+                                if pd.notna(face) and face > 0:
+                                    faces.add(f"{face:g}")
+                                    
+                            face_str = " & ".join(sorted(faces))
+                            face_info = f"   |   Face(s) de coupe: {face_str} mm" if face_str else ""
+                            
+                            titre = f"Profil: {info['profil']}{face_info}   |   Barre {info['idx']} sur {info['total']}   |   Chute: {info['barre']['chute']:.1f} mm"
+                            
+                            ax.set_title(titre, fontsize=8, loc='left', color='#374151', pad=5, fontweight='bold')
+                            dessiner_barre_pdf(ax, info['barre'], metrics['epaisseur_lame'], info['section_a'], info['section_b'], metrics['seuil_chute'], info['longueur_standard'])
+                        else:
+                            ax.axis('off') 
+                            
+                    pdf.savefig(fig)
+                    plt.close(fig)
+                    page_actuelle += 1
             
     buffer.seek(0)
     return buffer
