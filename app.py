@@ -574,7 +574,8 @@ with tab5:
                             st.success(f"🏆 **Résultat Optimal** : La longueur idéale à commander est de **{int(meilleur['Longueur Barre (mm)'])} mm** avec un rendement de **{meilleur['Rendement (%)']:.1f} %** ({int(meilleur['Nb Barres'])} barres requises).")
                             
                             # Graphique d'évolution du rendement
-                            fig, ax = plt.subplots(figsize=(10, 4))
+                            # CTO FIX: Réduction de la hauteur pour un affichage plus panoramique
+                            fig, ax = plt.subplots(figsize=(10, 3.5))
                             ax.plot(df_success["Longueur Barre (mm)"], df_success["Rendement (%)"], marker='o', color='#2563eb', linewidth=2, markersize=6)
                             
                             # CTO FIX: Ajout d'un "pad" pour éloigner le titre de la courbe
@@ -586,15 +587,24 @@ with tab5:
                             # CTO FIX: Ajout d'une marge mathématique sur l'axe Y pour ne pas couper le texte "Optimal"
                             y_max = df_success["Rendement (%)"].max()
                             y_min = df_success["Rendement (%)"].min()
-                            marge_haute = max((y_max - y_min) * 0.15, 1.0) # Au moins 1% de marge
+                            marge_haute = max((y_max - y_min) * 0.25, 1.5) # Marge généreuse pour le texte sur deux lignes
                             marge_basse = max((y_max - y_min) * 0.05, 0.5)
                             ax.set_ylim(y_min - marge_basse, y_max + marge_haute)
                             
                             # Mise en évidence du point optimal (L'étoile rouge)
-                            ax.plot(meilleur['Longueur Barre (mm)'], meilleur['Rendement (%)'], marker='*', color='red', markersize=14)
-                            ax.annotate(f"Optimal: {meilleur['Rendement (%)']:.1f}%", 
-                                        (meilleur['Longueur Barre (mm)'], meilleur['Rendement (%)']),
-                                        textcoords="offset points", xytext=(0,12), ha='center', fontsize=10, fontweight='bold', color='red')
+                            longueur_opt = meilleur['Longueur Barre (mm)']
+                            rendement_opt = meilleur['Rendement (%)']
+                            ax.plot(longueur_opt, rendement_opt, marker='*', color='red', markersize=14)
+                            
+                            # CTO FIX: Ligne de mire verticale
+                            ax.axvline(x=longueur_opt, color='red', linestyle=':', alpha=0.5)
+                            
+                            # CTO FIX: Valeur exacte + bulle blanche de lisibilité
+                            texte_opt = f"Optimal : {int(longueur_opt)} mm\n({rendement_opt:.1f} %)"
+                            ax.annotate(texte_opt, 
+                                        (longueur_opt, rendement_opt),
+                                        textcoords="offset points", xytext=(0,12), ha='center', fontsize=10, fontweight='bold', color='red',
+                                        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="red", alpha=0.9))
                             
                             # CTO FIX: Sécuriser les marges extérieures du graphique
                             fig.tight_layout()
