@@ -69,7 +69,10 @@ def dessiner_barre(barre_info, epaisseur_lame, section_a, section_b, seuil_chute
         chute = longueur_totale - position_actuelle
         est_reutilisable = chute >= seuil_chute
         ax.add_patch(patches.Rectangle((position_actuelle, 0), chute, largeur_visuelle, facecolor='#C8E6C9' if est_reutilisable else '#9E9E9E', edgecolor='black', hatch='' if est_reutilisable else '//'))
-        ax.text(position_actuelle + chute/2, largeur_visuelle/2, f"♻️ Chute\n{chute:.1f} mm" if est_reutilisable else f"Déchet\n{chute:.1f} mm", ha='center', va='center', color='black', fontweight='bold' if est_reutilisable else 'normal', fontsize=7)
+        
+        # CTO FIX: Suppression de l'émoji buggé pour le web aussi par souci d'homogénéité
+        label = f"[ CHUTE ]\n{chute:.1f} mm" if est_reutilisable else f"[ DÉCHET ]\n{chute:.1f} mm"
+        ax.text(position_actuelle + chute/2, largeur_visuelle/2, label, ha='center', va='center', color='black', fontweight='bold' if est_reutilisable else 'normal', fontsize=7)
         
     ax.set_xlim(0, longueur_totale)
     ax.set_ylim(0, largeur_visuelle * 1.05)
@@ -134,8 +137,9 @@ def dessiner_barre_pdf(ax, barre_info, epaisseur_lame, section_a, section_b, seu
         ax.add_patch(patches.Rectangle((position_actuelle, 0), chute, largeur_visuelle, facecolor=couleur, alpha=alpha, edgecolor='black', linewidth=0.5))
         
         if chute > 150:
-            label = f"♻️ Chute ({chute:.1f} mm)" if est_reutilisable else f"Déchet ({chute:.1f} mm)"
-            ax.text(position_actuelle + chute/2, largeur_visuelle/2, label, ha='center', va='center', color='#2c3e50', fontsize=5)
+            # CTO FIX: Suppression de l'émoji buggé pour le PDF, remplacement par texte propre
+            label = f"[ CHUTE ]\n{chute:.1f} mm" if est_reutilisable else f"[ DÉCHET ]\n{chute:.1f} mm"
+            ax.text(position_actuelle + chute/2, largeur_visuelle/2, label, ha='center', va='center', color='#2c3e50', fontsize=5, fontweight='bold' if est_reutilisable else 'normal')
             
     ax.set_xlim(-10, longueur_standard + 10)
     ax.set_ylim(0, largeur_visuelle * 1.3)
@@ -159,10 +163,8 @@ def generer_rapport_pdf(resultats, nom_projet, metrics):
                     "couleur": res.get('couleur', '')
                 })
         
-        # Tri alphabétique pour une lecture facile à l'atelier
         commandes = sorted(commandes, key=lambda x: x['profil'])
         
-        # Gestion intelligente des sauts de page pour le bordereau (max 35 profils par page)
         items_par_page = 35
         nb_pages_resume = max(1, math.ceil(len(commandes) / items_par_page))
         
@@ -171,71 +173,88 @@ def generer_rapport_pdf(resultats, nom_projet, metrics):
             fig_resume, ax = plt.subplots(figsize=(8.27, 11.69))
             ax.axis('off')
             
-            # --- BANDEAU D'EN-TÊTE DESIGN ---
-            # Utilisation de transAxes (0 à 1) pour être imperturbable aux changements de taille
+            # --- BANDEAU D'EN-TÊTE DESIGN & BRANDING ---
             ax.add_patch(patches.Rectangle((0, 0.92), 1, 0.08, facecolor='#2c3e50', transform=ax.transAxes, clip_on=False))
-            ax.text(0.05, 0.95, f"BORDEREAU D'APPROVISIONNEMENT & COUPE", fontsize=16, fontweight='bold', color='white', transform=ax.transAxes)
-            ax.text(0.05, 0.93, f"Projet : {nom_projet}", fontsize=12, color='#ecf0f1', transform=ax.transAxes)
+            ax.text(0.05, 0.96, f"BORDEREAU D'APPROVISIONNEMENT & COUPE", fontsize=14, fontweight='bold', color='white', transform=ax.transAxes)
+            ax.text(0.05, 0.935, f"Projet : {nom_projet}", fontsize=11, color='#ecf0f1', transform=ax.transAxes)
+            
+            # CTO FIX: Ajout du branding en haut à droite
+            ax.text(0.95, 0.95, "GILGEN & PETITPIERRE PARTNERS", fontsize=10, fontweight='bold', color='white', ha='right', transform=ax.transAxes)
             
             y_pos = 0.86
             
             # --- BLOC STATISTIQUES (Seulement sur la première page) ---
             if page_idx == 0:
-                # Titre Section 1
                 ax.text(0.05, y_pos, "📊 RÉSUMÉ GLOBAL DE MATIÈRE", fontsize=12, fontweight='bold', color='#2980b9', transform=ax.transAxes)
-                y_pos -= 0.03
+                y_pos -= 0.04
                 
-                # Chiffres clés
-                ax.text(0.07, y_pos, f"Matière Consommée : {metrics.get('conso', 0):.2f} mètres", fontsize=10, transform=ax.transAxes)
-                ax.text(0.45, y_pos, f"Matière Utile : {metrics.get('utile', 0):.2f} mètres", fontsize=10, transform=ax.transAxes)
-                ax.text(0.80, y_pos, f"Rendement : {metrics.get('rendement', 0):.1f} %", fontsize=10, fontweight='bold', color='#27ae60', transform=ax.transAxes)
+                # CTO FIX: Alignements intelligents Droite/Gauche pour éviter tout chevauchement
+                # Colonne 1
+                ax.text(0.05, y_pos, "Matière Consommée :", fontsize=10, transform=ax.transAxes)
+                ax.text(0.35, y_pos, f"{metrics.get('conso', 0):.2f} m", fontsize=10, fontweight='bold', ha='right', transform=ax.transAxes)
+                
+                # Colonne 2
+                ax.text(0.40, y_pos, "Matière Utile :", fontsize=10, transform=ax.transAxes)
+                ax.text(0.65, y_pos, f"{metrics.get('utile', 0):.2f} m", fontsize=10, fontweight='bold', ha='right', transform=ax.transAxes)
+                
+                # Colonne 3
+                ax.text(0.70, y_pos, "Rendement :", fontsize=10, transform=ax.transAxes)
+                ax.text(0.95, y_pos, f"{metrics.get('rendement', 0):.1f} %", fontsize=10, fontweight='bold', color='#27ae60', ha='right', transform=ax.transAxes)
                 
                 y_pos -= 0.05
                 
                 # Titre Section Peinture
                 ax.text(0.05, y_pos, "🎨 SURFACES À PEINDRE PAR FINITION", fontsize=12, fontweight='bold', color='#2980b9', transform=ax.transAxes)
-                y_pos -= 0.03
+                y_pos -= 0.04
                 
                 peintures = metrics.get('peinture_par_couleur', {})
                 if not peintures:
-                    ax.text(0.07, y_pos, "Aucune surface à peindre détectée sur ces profils.", fontsize=10, style='italic', color='#7f8c8d', transform=ax.transAxes)
+                    ax.text(0.05, y_pos, "Aucune surface à peindre détectée sur ces profils.", fontsize=10, style='italic', color='#7f8c8d', transform=ax.transAxes)
                     y_pos -= 0.03
                 else:
                     for coul, surf in peintures.items():
-                        label_coul = coul if coul else "Brut / Sans finition"
-                        ax.text(0.07, y_pos, f"• {label_coul}", fontsize=10, fontweight='bold', transform=ax.transAxes)
-                        ax.text(0.45, y_pos, f":   {surf:.2f} m²", fontsize=10, transform=ax.transAxes)
-                        y_pos -= 0.02
+                        # CTO FIX: Formatage propre et respectueux "Traitement / Couleur : 1"
+                        label_coul = f"Traitement / Couleur : {coul}" if coul else "Brut / Sans finition"
+                        ax.text(0.05, y_pos, f"• {label_coul}", fontsize=10, transform=ax.transAxes)
+                        ax.text(0.40, y_pos, f"{surf:.2f} m²", fontsize=10, fontweight='bold', ha='right', transform=ax.transAxes)
+                        y_pos -= 0.025
                     y_pos -= 0.01
 
             # --- TABLEAU BORDEREAU DE COMMANDE ---
             ax.text(0.05, y_pos, "📦 RÉCAPITULATIF DES COMMANDES", fontsize=12, fontweight='bold', color='#2980b9', transform=ax.transAxes)
-            y_pos -= 0.015
+            y_pos -= 0.02
             
             # En-tête du tableau (Fond gris)
             ax.add_patch(patches.Rectangle((0.05, y_pos-0.01), 0.9, 0.025, facecolor='#ecf0f1', edgecolor='#bdc3c7', linewidth=0.5, transform=ax.transAxes, clip_on=False))
             ax.text(0.06, y_pos, "PROFIL", fontsize=9, fontweight='bold', color='#2c3e50', transform=ax.transAxes)
-            ax.text(0.50, y_pos, "FINITION (COULEUR)", fontsize=9, fontweight='bold', color='#2c3e50', transform=ax.transAxes)
-            ax.text(0.75, y_pos, "LONG. BARRE", fontsize=9, fontweight='bold', color='#2c3e50', transform=ax.transAxes)
-            ax.text(0.90, y_pos, "QTÉ", fontsize=9, fontweight='bold', color='#2c3e50', ha='center', transform=ax.transAxes)
+            ax.text(0.45, y_pos, "FINITION (COULEUR)", fontsize=9, fontweight='bold', color='#2c3e50', transform=ax.transAxes)
+            
+            # CTO FIX: Titres numériques alignés à droite
+            ax.text(0.80, y_pos, "LONGUEUR", fontsize=9, fontweight='bold', color='#2c3e50', ha='right', transform=ax.transAxes)
+            ax.text(0.93, y_pos, "QTÉ", fontsize=9, fontweight='bold', color='#2c3e50', ha='right', transform=ax.transAxes)
             y_pos -= 0.03
             
             # Lignes du tableau
             start_idx = page_idx * items_par_page
             end_idx = min(start_idx + items_par_page, len(commandes))
             
-            for cmd in commandes[start_idx:end_idx]:
+            for i, cmd in enumerate(commandes[start_idx:end_idx]):
+                # CTO FIX: Zébrure pour le confort visuel
+                if i % 2 == 0:
+                    ax.add_patch(patches.Rectangle((0.05, y_pos-0.012), 0.9, 0.024, facecolor='#f8f9fa', edgecolor='none', transform=ax.transAxes, clip_on=False))
+                
                 ax.text(0.06, y_pos, str(cmd['profil']), fontsize=9, transform=ax.transAxes)
                 
                 finition = str(cmd['couleur']) if cmd['couleur'] else "Brut"
-                ax.text(0.50, y_pos, finition, fontsize=9, color='#7f8c8d' if finition=="Brut" else 'black', transform=ax.transAxes)
+                ax.text(0.45, y_pos, finition, fontsize=9, color='#7f8c8d' if finition=="Brut" else 'black', transform=ax.transAxes)
                 
-                ax.text(0.75, y_pos, f"{cmd['longueur']:g} mm", fontsize=9, transform=ax.transAxes)
-                ax.text(0.90, y_pos, f"{cmd['qte']}", fontsize=10, fontweight='bold', ha='center', transform=ax.transAxes)
+                # CTO FIX: Valeurs numériques alignées strictement à droite
+                ax.text(0.80, y_pos, f"{cmd['longueur']:g} mm", fontsize=9, ha='right', transform=ax.transAxes)
+                ax.text(0.93, y_pos, f"{cmd['qte']}", fontsize=10, fontweight='bold', ha='right', transform=ax.transAxes)
                 
                 # Ligne séparatrice fine
-                ax.plot([0.05, 0.95], [y_pos-0.01, y_pos-0.01], color='#ecf0f1', lw=0.5, transform=ax.transAxes)
-                y_pos -= 0.022
+                ax.plot([0.05, 0.95], [y_pos-0.012, y_pos-0.012], color='#ecf0f1', lw=0.5, transform=ax.transAxes)
+                y_pos -= 0.024
 
             # Traçabilité et pagination
             ax.text(0.05, 0.02, f"Généré le {date_generation}", fontsize=8, color='#95a5a6', transform=ax.transAxes)
@@ -267,13 +286,13 @@ def generer_rapport_pdf(resultats, nom_projet, metrics):
             
             if barres_par_page == 1: axes = [axes]
             
-            # Espace ajusté pour le bandeau d'en-tête
-            fig.subplots_adjust(left=0.05, right=0.95, top=0.88, bottom=0.06, hspace=0.8)
+            # CTO FIX: Bandeau d'en-tête aminci pour laisser plus d'espace aux barres
+            fig.subplots_adjust(left=0.05, right=0.95, top=0.91, bottom=0.06, hspace=0.8)
             
-            # Bandeau d'en-tête pour les pages de coupe
-            rect = patches.Rectangle((0, 0.95), 1, 0.05, facecolor='#34495e', transform=fig.transFigure, clip_on=False)
+            rect = patches.Rectangle((0, 0.96), 1, 0.04, facecolor='#34495e', transform=fig.transFigure, clip_on=False)
             fig.patches.append(rect)
-            fig.text(0.05, 0.965, f"PLANS DE COUPE - {nom_projet}", fontsize=12, fontweight='bold', color='white')
+            fig.text(0.05, 0.972, f"PLANS DE COUPE - {nom_projet}", fontsize=11, fontweight='bold', color='white')
+            fig.text(0.95, 0.972, "GILGEN & PETITPIERRE PARTNERS", fontsize=9, fontweight='bold', color='white', ha='right')
             
             # Traçabilité bas de page
             fig.text(0.05, 0.02, f"Généré le {date_generation}", fontsize=8, color='#95a5a6')
