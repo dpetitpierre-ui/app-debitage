@@ -160,7 +160,7 @@ with tab1:
                 except Exception as e:
                     st.error(f"Erreur d'import : {e}")
 
-    # BOUCLIER 3 : Retrait pur et simple de 'use_container_width' qui causait le spam d'erreur dans la console
+    # BOUCLIER 3 : Retrait pur et simple de 'use_container_width'
     st.session_state.df_standards_edited = st.data_editor(
         st.session_state.df_standards_base, num_rows="dynamic", key="editor_std", hide_index=True, 
         column_config={
@@ -377,14 +377,23 @@ with tab4:
                     else:
                         total_longueur_pieces = 0
                         total_longueur_barres = 0
-                        total_surface_peinture = 0.0
                         
-                        for profil_res in resultats.values():
+                        # AJOUT CTO : Dictionnaire pour la peinture
+                        peinture_par_couleur = {}
+                        
+                        for nom_profil, profil_res in resultats.items():
                             if type(profil_res) == dict and profil_res["statut"] == "SUCCES":
                                 nb_barres = len(profil_res["barres"])
                                 perimetre = profil_res.get("longueur_peinture", 0)
                                 longueur_barre = profil_res.get("longueur_barre_standard", 0)
-                                total_surface_peinture += (perimetre * longueur_barre * nb_barres) / 1000000.0
+                                couleur = profil_res.get("couleur", "Brut")
+                                
+                                # Si vide, on considère Brut
+                                if not couleur: couleur = "Brut"
+                                
+                                surface = (perimetre * longueur_barre * nb_barres) / 1000000.0
+                                if surface > 0:
+                                    peinture_par_couleur[couleur] = peinture_par_couleur.get(couleur, 0.0) + surface
                                 
                                 for b in profil_res["barres"]:
                                     total_longueur_barres += b['barre_longueur']
@@ -398,19 +407,29 @@ with tab4:
                                 "conso": total_longueur_barres / 1000,
                                 "utile": total_longueur_pieces / 1000,
                                 "rendement": rendement,
-                                "peinture": total_surface_peinture,
+                                "peinture_par_couleur": peinture_par_couleur,
                                 "epaisseur_lame": EPAISSEUR_LAME,
                                 "seuil_chute": SEUIL_CHUTE
                             }
                             pdf_buffer = draw.generer_rapport_pdf(resultats, st.session_state.projet_actif, metrics_pdf)
                             
-                            col1, col2, col3, col4, col5 = st.columns([1.5, 1.5, 1.5, 1.5, 2])
+                            # Refonte visuelle web pour intégrer les différentes peintures
+                            col1, col2, col3, col4 = st.columns(4)
                             col1.metric("Matière Consommée", f"{total_longueur_barres / 1000:.2f} m")
                             col2.metric("Matière Utile", f"{total_longueur_pieces / 1000:.2f} m")
                             col3.metric("Rendement", f"{rendement:.1f} %", f"-{100-rendement:.1f} %", delta_color="inverse")
-                            col4.metric("Surface Peinture", f"{total_surface_peinture:.2f} m²")
-                            with col5:
-                                st.download_button("📄 Télécharger Rapport PDF (A4)", data=pdf_buffer, file_name=f"Rapport_{st.session_state.projet_actif}.pdf", type="primary")
+                            
+                            with col4:
+                                st.markdown("🎨 **Surfaces à peindre**")
+                                if not peinture_par_couleur:
+                                    st.caption("Aucune")
+                                else:
+                                    for c, s in peinture_par_couleur.items():
+                                        label = c if c else "Brut"
+                                        st.write(f"- {label}: **{s:.2f} m²**")
+                            
+                            st.divider()
+                            st.download_button("📄 Télécharger le Dossier de Production PDF", data=pdf_buffer, file_name=f"Bordereau_Production_{st.session_state.projet_actif}.pdf", type="primary", use_container_width=True)
                             st.divider()
 
                         for nom_profil, resultat in resultats.items():
@@ -425,7 +444,8 @@ with tab4:
                                     st.error(f"❌ Erreur sur ce profil : {resultat}")
                             else:
                                 surface_profil = (resultat.get('longueur_peinture', 0) * resultat.get('longueur_barre_standard', 0) * len(resultat['barres'])) / 1000000.0
-                                st.success(f"📦 À commander : {len(resultat['barres'])} barre(s) de {resultat['barres'][0]['barre_longueur']} mm.  *(Surface de peinture : {surface_profil:.2f} m²)*")
+                                text_peinture = f"*(Surface de peinture : {surface_profil:.2f} m²)*" if surface_profil > 0 else ""
+                                st.success(f"📦 À commander : {len(resultat['barres'])} barre(s) de {resultat['barres'][0]['barre_longueur']} mm.  {text_peinture}")
                                 
                                 max_affichage_web = 15
                                 nb_total_barres = len(resultat["barres"])
