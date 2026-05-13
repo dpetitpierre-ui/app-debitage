@@ -140,7 +140,7 @@ with st.sidebar:
 # -----------------------------------------------------------------------------
 st.title(f"🪚 Projet : {st.session_state.projet_actif}")
 
-tab1, tab2, tab3, tab4 = st.tabs(["📚 1. Base Standard", f"📦 2. Profils du Projet ({st.session_state.projet_actif})", "📝 3. Listes de Pièces", "📊 4. Résultats & Commandes"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📚 1. Base Standard", f"📦 2. Profils du Projet ({st.session_state.projet_actif})", "📝 3. Listes de Pièces", "📊 4. Résultats & Commandes", "🔍 5. Longueur Idéale"])
 
 with tab1:
     col1, col2 = st.columns([2, 1])
@@ -469,3 +469,129 @@ with tab4:
                                     texte_chutes = ", ".join([f"{c:.1f} mm" for c in chutes_utiles])
                                     st.info(f"♻️ Vous générerez **{len(chutes_utiles)} chute(s)** à conserver (>300mm) : {texte_chutes}.")
                             st.divider()
+
+with tab5:
+    st.subheader("🔍 Recherche de la longueur de barre optimale")
+    st.write("Cet outil simule la découpe sur une plage de longueurs pour trouver celle qui offre le meilleur rendement matière.")
+    
+    profils_projet = projet_courant.get("profils_edited", projet_courant["profils"])
+    profils_standards = st.session_state.get("df_standards_edited", st.session_state.df_standards_base)
+    tous_les_profils = pd.concat([profils_projet, profils_standards])['Nom'].dropna().unique().tolist()
+    
+    if not tous_les_profils:
+        st.warning("Aucun profil disponible dans le projet ou la base standard.")
+    else:
+        col_cfg1, col_cfg2 = st.columns(2)
+        with col_cfg1:
+            profil_a_simuler = st.selectbox("Sélectionnez le profil à analyser :", options=tous_les_profils)
+            listes_pour_simulation = st.multiselect("Listes de pièces à inclure :", options=noms_listes, default=noms_listes, key="sim_listes")
+        
+        with col_cfg2:
+            plage_longueur = st.slider("Plage de longueurs à tester (mm) :", min_value=2000, max_value=12000, value=(5000, 8000), step=100)
+            pas_simulation = st.selectbox("Pas d'incrémentation (mm) :", options=[50, 100, 250, 500, 1000], index=1)
+            
+        if st.button("🔬 Lancer la simulation", type="primary", use_container_width=True):
+            if not listes_pour_simulation:
+                st.warning("Veuillez sélectionner au moins une liste.")
+            else:
+                frames_pieces_sim = []
+                for nom_liste in listes_pour_simulation:
+                    df_l = projet_courant.get("listes_edited", {}).get(nom_liste, projet_courant["listes"][nom_liste])
+                    if not df_l.empty:
+                        df_temp = df_l.copy()
+                        df_temp['Nom de la Liste'] = nom_liste
+                        frames_pieces_sim.append(df_temp)
+                
+                df_pieces_sim = pd.concat(frames_pieces_sim, ignore_index=True) if frames_pieces_sim else pd.DataFrame()
+                
+                if not df_pieces_sim.empty:
+                    df_pieces_sim = df_pieces_sim[df_pieces_sim['Profil'] == profil_a_simuler]
+                    
+                if df_pieces_sim.empty:
+                    st.warning("Aucune pièce pour ce profil dans les listes sélectionnées.")
+                else:
+                    with st.spinner("Analyse mathématique de toutes les combinaisons en cours..."):
+                        longueurs_a_tester = list(range(plage_longueur[0], plage_longueur[1] + pas_simulation, pas_simulation))
+                        max_piece_len = df_pieces_sim['Longueur (mm)'].max()
+                        
+                        resultats_sim = []
+                        progress_bar = st.progress(0)
+                        
+                        for idx, L_test in enumerate(longueurs_a_tester):
+                            if L_test < max_piece_len + CHUTE_MINIMUM:
+                                rendement = 0.0
+                                nb_barres = 0
+                                chute_tot = 0.0
+                                statut = "Échec (Pièce trop grande)"
+                            else:
+                                # On crée un faux dataframe de profil avec juste la longueur testée
+                                df_prof_sim = pd.DataFrame([{
+                                    "Nom": profil_a_simuler,
+                                    "Longueur Barre (mm)": L_test,
+                                    "Section A (mm)": 50.0,
+                                    "Section B (mm)": 50.0,
+                                    "Couleur": "",
+                                    "Longueur Peinture (mm)": 0.0
+                                }])
+                                
+                                # On fait appel à l'optimiseur exact pour CHAQUE longueur
+                                res_opt = opt.optimiser_projet_complet(df_pieces_sim, df_prof_sim, EPAISSEUR_LAME, CHUTE_MINIMUM)
+                                res_profil = res_opt.get(profil_a_simuler, {})
+                                
+                                if isinstance(res_profil, dict) and res_profil.get("statut") == "SUCCES":
+                                    tot_pieces = 0
+                                    tot_barres = 0
+                                    nb_barres = len(res_profil["barres"])
+                                    
+                                    for b in res_profil["barres"]:
+                                        tot_barres += b['barre_longueur']
+                                        for p in b['pieces']:
+                                            tot_pieces += p['longueur']
+                                    
+                                    rendement = (tot_pieces / tot_barres * 100) if tot_barres > 0 else 0
+                                    chute_tot = sum([b['chute'] for b in res_profil["barres"]])
+                                    statut = "Succès"
+                                else:
+                                    rendement = 0.0
+                                    nb_barres = 0
+                                    chute_tot = 0.0
+                                    statut = "Échec"
+                                    
+                            resultats_sim.append({
+                                "Longueur Barre (mm)": L_test,
+                                "Rendement (%)": round(rendement, 2),
+                                "Nb Barres": nb_barres,
+                                "Chute Totale (mm)": round(chute_tot, 1),
+                                "Statut": statut
+                            })
+                            progress_bar.progress((idx + 1) / len(longueurs_a_tester))
+                        
+                        df_res_sim = pd.DataFrame(resultats_sim)
+                        df_success = df_res_sim[df_res_sim["Statut"] == "Succès"]
+                        
+                        if not df_success.empty:
+                            meilleur = df_success.loc[df_success["Rendement (%)"].idxmax()]
+                            st.success(f"🏆 **Résultat Optimal** : La longueur idéale à commander est de **{int(meilleur['Longueur Barre (mm)'])} mm** avec un rendement de **{meilleur['Rendement (%)']:.1f} %** ({int(meilleur['Nb Barres'])} barres requises).")
+                            
+                            # Graphique d'évolution du rendement
+                            fig, ax = plt.subplots(figsize=(10, 4))
+                            ax.plot(df_success["Longueur Barre (mm)"], df_success["Rendement (%)"], marker='o', color='#2563eb', linewidth=2, markersize=6)
+                            ax.set_title(f"Évolution du Rendement selon la Longueur - Profil {profil_a_simuler}", fontsize=12, fontweight='bold', color='#1f2937')
+                            ax.set_xlabel("Longueur de Barre (mm)", fontsize=10)
+                            ax.set_ylabel("Rendement (%)", fontsize=10)
+                            ax.grid(True, linestyle='--', alpha=0.6)
+                            
+                            # Mise en évidence du point optimal (L'étoile rouge)
+                            ax.plot(meilleur['Longueur Barre (mm)'], meilleur['Rendement (%)'], marker='*', color='red', markersize=12)
+                            ax.annotate(f"Optimal: {meilleur['Rendement (%)']:.1f}%", 
+                                        (meilleur['Longueur Barre (mm)'], meilleur['Rendement (%)']),
+                                        textcoords="offset points", xytext=(0,10), ha='center', fontsize=9, fontweight='bold', color='red')
+                            
+                            st.pyplot(fig)
+                            plt.close(fig)
+                            
+                            # Tableau complet pour analyse brute
+                            st.markdown("#### 📋 Détail des Simulations")
+                            st.dataframe(df_res_sim, use_container_width=True, hide_index=True)
+                        else:
+                            st.error("❌ Aucune longueur testée n'a permis de générer un plan de coupe (Vérifiez que la longueur maximale testée est bien supérieure à la plus grande pièce de la liste).")
