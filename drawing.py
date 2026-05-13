@@ -4,6 +4,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 import pandas as pd
 import math
 import io
+from datetime import datetime
 
 def dessiner_barre(barre_info, epaisseur_lame, section_a, section_b, seuil_chute):
     largeur_visuelle = section_a if section_a > 0 else 50.0
@@ -30,7 +31,6 @@ def dessiner_barre(barre_info, epaisseur_lame, section_a, section_b, seuil_chute
         ang_g = p.get('angle_g', 90.0)
         ang_d = p.get('angle_d', 90.0)
         
-        # --- BOUCLIER CTO : Anti-Division par Zéro (Crash fatal évité) ---
         if pd.isna(ang_g) or ang_g <= 0: ang_g = 90.0
         if pd.isna(ang_d) or ang_d <= 0: ang_d = 90.0
         
@@ -90,7 +90,6 @@ def dessiner_barre_pdf(ax, barre_info, epaisseur_lame, section_a, section_b, seu
         ang_g = p.get('angle_g', 90.0)
         ang_d = p.get('angle_d', 90.0)
         
-        # --- BOUCLIER CTO : Anti-Division par Zéro ---
         if pd.isna(ang_g) or ang_g <= 0: ang_g = 90.0
         if pd.isna(ang_d) or ang_d <= 0: ang_d = 90.0
         
@@ -144,44 +143,109 @@ def dessiner_barre_pdf(ax, barre_info, epaisseur_lame, section_a, section_b, seu
 
 def generer_rapport_pdf(resultats, nom_projet, metrics):
     buffer = io.BytesIO()
+    date_generation = datetime.now().strftime("%d/%m/%Y à %H:%M")
+    page_actuelle = 1
+    
     with PdfPages(buffer) as pdf:
         
-        fig_resume, ax = plt.subplots(figsize=(8.27, 11.69))
-        ax.axis('off')
+        # 1. PRÉPARATION DES DONNÉES DU BORDEREAU
+        commandes = []
+        for nom_profil, res in resultats.items():
+            if type(res) == dict and res["statut"] == "SUCCES":
+                commandes.append({
+                    "profil": nom_profil,
+                    "qte": len(res['barres']),
+                    "longueur": res['barres'][0]['barre_longueur'],
+                    "couleur": res.get('couleur', '')
+                })
         
-        ax.text(0.5, 0.90, "RAPPORT DE DÉBITAGE", fontsize=24, ha='center', fontweight='bold', color='#2c3e50')
-        ax.text(0.5, 0.86, f"Projet : {nom_projet}", fontsize=16, ha='center', color='#34495e')
-        ax.plot([0.1, 0.9], [0.83, 0.83], color='#bdc3c7', lw=1) 
+        # Tri alphabétique pour une lecture facile à l'atelier
+        commandes = sorted(commandes, key=lambda x: x['profil'])
         
-        y = 0.75
-        ax.text(0.1, y, "📊 RÉSUMÉ GLOBAL", fontsize=14, fontweight='bold', color='#2980b9')
-        y -= 0.05
-        ax.text(0.12, y, f"• Matière Consommée : {metrics.get('conso', 0):.2f} mètres", fontsize=12)
-        y -= 0.03
-        ax.text(0.12, y, f"• Matière Utile : {metrics.get('utile', 0):.2f} mètres", fontsize=12)
-        y -= 0.03
-        ax.text(0.12, y, f"• Rendement : {metrics.get('rendement', 0):.1f} %", fontsize=12, fontweight='bold', color='#27ae60')
-        y -= 0.03
-        ax.text(0.12, y, f"• Surface à Peindre : {metrics.get('peinture', 0):.2f} m²", fontsize=12)
+        # Gestion intelligente des sauts de page pour le bordereau (max 35 profils par page)
+        items_par_page = 35
+        nb_pages_resume = max(1, math.ceil(len(commandes) / items_par_page))
         
-        y -= 0.08
-        ax.plot([0.1, 0.9], [y+0.02, y+0.02], color='#bdc3c7', lw=0.5)
-        ax.text(0.1, y-0.02, "📦 COMMANDES REQUISES", fontsize=14, fontweight='bold', color='#2980b9')
-        y -= 0.06
+        # 2. GÉNÉRATION DES PAGES DE BORDEREAU ET RÉSUMÉ
+        for page_idx in range(nb_pages_resume):
+            fig_resume, ax = plt.subplots(figsize=(8.27, 11.69))
+            ax.axis('off')
+            
+            # --- BANDEAU D'EN-TÊTE DESIGN ---
+            # Utilisation de transAxes (0 à 1) pour être imperturbable aux changements de taille
+            ax.add_patch(patches.Rectangle((0, 0.92), 1, 0.08, facecolor='#2c3e50', transform=ax.transAxes, clip_on=False))
+            ax.text(0.05, 0.95, f"BORDEREAU D'APPROVISIONNEMENT & COUPE", fontsize=16, fontweight='bold', color='white', transform=ax.transAxes)
+            ax.text(0.05, 0.93, f"Projet : {nom_projet}", fontsize=12, color='#ecf0f1', transform=ax.transAxes)
+            
+            y_pos = 0.86
+            
+            # --- BLOC STATISTIQUES (Seulement sur la première page) ---
+            if page_idx == 0:
+                # Titre Section 1
+                ax.text(0.05, y_pos, "📊 RÉSUMÉ GLOBAL DE MATIÈRE", fontsize=12, fontweight='bold', color='#2980b9', transform=ax.transAxes)
+                y_pos -= 0.03
+                
+                # Chiffres clés
+                ax.text(0.07, y_pos, f"Matière Consommée : {metrics.get('conso', 0):.2f} mètres", fontsize=10, transform=ax.transAxes)
+                ax.text(0.45, y_pos, f"Matière Utile : {metrics.get('utile', 0):.2f} mètres", fontsize=10, transform=ax.transAxes)
+                ax.text(0.80, y_pos, f"Rendement : {metrics.get('rendement', 0):.1f} %", fontsize=10, fontweight='bold', color='#27ae60', transform=ax.transAxes)
+                
+                y_pos -= 0.05
+                
+                # Titre Section Peinture
+                ax.text(0.05, y_pos, "🎨 SURFACES À PEINDRE PAR FINITION", fontsize=12, fontweight='bold', color='#2980b9', transform=ax.transAxes)
+                y_pos -= 0.03
+                
+                peintures = metrics.get('peinture_par_couleur', {})
+                if not peintures:
+                    ax.text(0.07, y_pos, "Aucune surface à peindre détectée sur ces profils.", fontsize=10, style='italic', color='#7f8c8d', transform=ax.transAxes)
+                    y_pos -= 0.03
+                else:
+                    for coul, surf in peintures.items():
+                        label_coul = coul if coul else "Brut / Sans finition"
+                        ax.text(0.07, y_pos, f"• {label_coul}", fontsize=10, fontweight='bold', transform=ax.transAxes)
+                        ax.text(0.45, y_pos, f":   {surf:.2f} m²", fontsize=10, transform=ax.transAxes)
+                        y_pos -= 0.02
+                    y_pos -= 0.01
+
+            # --- TABLEAU BORDEREAU DE COMMANDE ---
+            ax.text(0.05, y_pos, "📦 RÉCAPITULATIF DES COMMANDES", fontsize=12, fontweight='bold', color='#2980b9', transform=ax.transAxes)
+            y_pos -= 0.015
+            
+            # En-tête du tableau (Fond gris)
+            ax.add_patch(patches.Rectangle((0.05, y_pos-0.01), 0.9, 0.025, facecolor='#ecf0f1', edgecolor='#bdc3c7', linewidth=0.5, transform=ax.transAxes, clip_on=False))
+            ax.text(0.06, y_pos, "PROFIL", fontsize=9, fontweight='bold', color='#2c3e50', transform=ax.transAxes)
+            ax.text(0.50, y_pos, "FINITION (COULEUR)", fontsize=9, fontweight='bold', color='#2c3e50', transform=ax.transAxes)
+            ax.text(0.75, y_pos, "LONG. BARRE", fontsize=9, fontweight='bold', color='#2c3e50', transform=ax.transAxes)
+            ax.text(0.90, y_pos, "QTÉ", fontsize=9, fontweight='bold', color='#2c3e50', ha='center', transform=ax.transAxes)
+            y_pos -= 0.03
+            
+            # Lignes du tableau
+            start_idx = page_idx * items_par_page
+            end_idx = min(start_idx + items_par_page, len(commandes))
+            
+            for cmd in commandes[start_idx:end_idx]:
+                ax.text(0.06, y_pos, str(cmd['profil']), fontsize=9, transform=ax.transAxes)
+                
+                finition = str(cmd['couleur']) if cmd['couleur'] else "Brut"
+                ax.text(0.50, y_pos, finition, fontsize=9, color='#7f8c8d' if finition=="Brut" else 'black', transform=ax.transAxes)
+                
+                ax.text(0.75, y_pos, f"{cmd['longueur']:g} mm", fontsize=9, transform=ax.transAxes)
+                ax.text(0.90, y_pos, f"{cmd['qte']}", fontsize=10, fontweight='bold', ha='center', transform=ax.transAxes)
+                
+                # Ligne séparatrice fine
+                ax.plot([0.05, 0.95], [y_pos-0.01, y_pos-0.01], color='#ecf0f1', lw=0.5, transform=ax.transAxes)
+                y_pos -= 0.022
+
+            # Traçabilité et pagination
+            ax.text(0.05, 0.02, f"Généré le {date_generation}", fontsize=8, color='#95a5a6', transform=ax.transAxes)
+            ax.text(0.95, 0.02, f"Page {page_actuelle}", fontsize=8, color='#95a5a6', ha='right', transform=ax.transAxes)
+            page_actuelle += 1
+            
+            pdf.savefig(fig_resume)
+            plt.close(fig_resume)
         
-        for nom_profil, resultat in resultats.items():
-            if type(resultat) == dict and resultat["statut"] == "SUCCES":
-                qte = len(resultat['barres'])
-                longueur = resultat['barres'][0]['barre_longueur']
-                ax.text(0.12, y, f"✓ {qte} barre(s) de {longueur} mm  (Profil: {nom_profil})", fontsize=11)
-                y -= 0.03
-                if y < 0.1:
-                    ax.text(0.12, y, "... (suite sur les pages de coupe)", fontsize=10, style='italic')
-                    break
-                    
-        pdf.savefig(fig_resume)
-        plt.close(fig_resume)
-        
+        # 3. GÉNÉRATION DES PLANS DE COUPE
         barres_a_dessiner = []
         for nom_profil, resultat in resultats.items():
             if type(resultat) == dict and resultat["statut"] == "SUCCES":
@@ -203,8 +267,17 @@ def generer_rapport_pdf(resultats, nom_projet, metrics):
             
             if barres_par_page == 1: axes = [axes]
             
-            fig.subplots_adjust(left=0.05, right=0.95, top=0.92, bottom=0.05, hspace=0.8)
-            fig.suptitle(f"Plans de coupe - {nom_projet} (Page {i//barres_par_page + 1})", fontsize=12, fontweight='bold', color='#2c3e50', y=0.98)
+            # Espace ajusté pour le bandeau d'en-tête
+            fig.subplots_adjust(left=0.05, right=0.95, top=0.88, bottom=0.06, hspace=0.8)
+            
+            # Bandeau d'en-tête pour les pages de coupe
+            rect = patches.Rectangle((0, 0.95), 1, 0.05, facecolor='#34495e', transform=fig.transFigure, clip_on=False)
+            fig.patches.append(rect)
+            fig.text(0.05, 0.965, f"PLANS DE COUPE - {nom_projet}", fontsize=12, fontweight='bold', color='white')
+            
+            # Traçabilité bas de page
+            fig.text(0.05, 0.02, f"Généré le {date_generation}", fontsize=8, color='#95a5a6')
+            fig.text(0.95, 0.02, f"Page {page_actuelle}", fontsize=8, color='#95a5a6', ha='right')
             
             for j in range(barres_par_page):
                 ax = axes[j]
@@ -230,6 +303,7 @@ def generer_rapport_pdf(resultats, nom_projet, metrics):
                     
             pdf.savefig(fig)
             plt.close(fig)
+            page_actuelle += 1
             
     buffer.seek(0)
     return buffer
