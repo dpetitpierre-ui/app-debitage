@@ -377,6 +377,7 @@ with tab4:
                     else:
                         total_longueur_pieces = 0
                         total_longueur_barres = 0
+                        total_poids = 0.0 # AJOUT CTO : Poids total
                         
                         # AJOUT CTO : Dictionnaire pour la peinture
                         peinture_par_couleur = {}
@@ -387,6 +388,7 @@ with tab4:
                                 perimetre = profil_res.get("longueur_peinture", 0)
                                 longueur_barre = profil_res.get("longueur_barre_standard", 0)
                                 couleur = profil_res.get("couleur", "Brut")
+                                poids_ml = profil_res.get("poids_ml", 0.0) # AJOUT CTO
                                 
                                 # Si vide, on considère Brut
                                 if not couleur: couleur = "Brut"
@@ -394,6 +396,10 @@ with tab4:
                                 surface = (perimetre * longueur_barre * nb_barres) / 1000000.0
                                 if surface > 0:
                                     peinture_par_couleur[couleur] = peinture_par_couleur.get(couleur, 0.0) + surface
+                                    
+                                # AJOUT CTO : Calcul du poids
+                                poids_profil = (longueur_barre * nb_barres / 1000.0) * poids_ml
+                                total_poids += poids_profil
                                 
                                 for b in profil_res["barres"]:
                                     total_longueur_barres += b['barre_longueur']
@@ -409,17 +415,19 @@ with tab4:
                                 "rendement": rendement,
                                 "peinture_par_couleur": peinture_par_couleur,
                                 "epaisseur_lame": EPAISSEUR_LAME,
-                                "seuil_chute": SEUIL_CHUTE
+                                "seuil_chute": SEUIL_CHUTE,
+                                "poids_total": total_poids # AJOUT CTO
                             }
                             pdf_buffer = draw.generer_rapport_pdf(resultats, st.session_state.projet_actif, metrics_pdf)
                             
-                            # Refonte visuelle web pour intégrer les différentes peintures
-                            col1, col2, col3, col4 = st.columns(4)
+                            # Refonte visuelle web pour intégrer les différentes peintures et le poids
+                            col1, col2, col3, col4, col5 = st.columns(5)
                             col1.metric("Matière Consommée", f"{total_longueur_barres / 1000:.2f} m")
                             col2.metric("Matière Utile", f"{total_longueur_pieces / 1000:.2f} m")
-                            col3.metric("Rendement", f"{rendement:.1f} %", f"-{100-rendement:.1f} %", delta_color="inverse")
+                            col3.metric("Poids Total", f"{total_poids:.2f} kg")
+                            col4.metric("Rendement", f"{rendement:.1f} %", f"-{100-rendement:.1f} %", delta_color="inverse")
                             
-                            with col4:
+                            with col5:
                                 st.markdown("🎨 **Surfaces à peindre**")
                                 if not peinture_par_couleur:
                                     st.caption("Aucune")
@@ -444,8 +452,13 @@ with tab4:
                                     st.error(f"❌ Erreur sur ce profil : {resultat}")
                             else:
                                 surface_profil = (resultat.get('longueur_peinture', 0) * resultat.get('longueur_barre_standard', 0) * len(resultat['barres'])) / 1000000.0
-                                text_peinture = f"*(Surface de peinture : {surface_profil:.2f} m²)*" if surface_profil > 0 else ""
-                                st.success(f"📦 À commander : {len(resultat['barres'])} barre(s) de {resultat['barres'][0]['barre_longueur']} mm.  {text_peinture}")
+                                poids_ml = resultat.get("poids_ml", 0.0)
+                                poids_profil = (resultat.get('longueur_barre_standard', 0) * len(resultat['barres']) / 1000.0) * poids_ml
+                                
+                                text_peinture = f"*(Surface : {surface_profil:.2f} m²)*" if surface_profil > 0 else ""
+                                text_poids = f"*(Poids : {poids_profil:.2f} kg)*" if poids_profil > 0 else ""
+                                
+                                st.success(f"📦 À commander : **{len(resultat['barres'])} barre(s)** de {resultat['barres'][0]['barre_longueur']} mm.  {text_poids} {text_peinture}")
                                 
                                 max_affichage_web = 15
                                 nb_total_barres = len(resultat["barres"])
