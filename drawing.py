@@ -154,11 +154,17 @@ def generer_rapport_pdf(resultats, nom_projet, metrics):
         commandes = []
         for nom_profil, res in resultats.items():
             if type(res) == dict and res["statut"] == "SUCCES":
+                poids_ml = res.get('poids_ml', 0.0)
+                longueur_barre = res['barres'][0]['barre_longueur']
+                qte = len(res['barres'])
+                poids_profil = (longueur_barre * qte / 1000.0) * poids_ml
+                
                 commandes.append({
                     "profil": nom_profil,
-                    "qte": len(res['barres']),
-                    "longueur": res['barres'][0]['barre_longueur'],
-                    "couleur": res.get('couleur', '')
+                    "qte": qte,
+                    "longueur": longueur_barre,
+                    "couleur": res.get('couleur', ''),
+                    "poids": poids_profil
                 })
         
         commandes = sorted(commandes, key=lambda x: x['profil'])
@@ -194,6 +200,14 @@ def generer_rapport_pdf(resultats, nom_projet, metrics):
                 ax.text(0.38, y_pos, f"{metrics.get('utile', 0):.2f} mètres", fontsize=10, fontweight='bold', transform=ax.transAxes)
                 y_pos -= 0.03
                 
+                # AJOUT CTO : Poids Total s'il y en a un
+                poids_tot = metrics.get('poids_total', 0)
+                if poids_tot > 0:
+                    ax.text(0.05, y_pos, "POIDS TOTAL ESTIMÉ", fontsize=10, fontweight='bold', color='#4b5563', transform=ax.transAxes)
+                    ax.text(0.35, y_pos, ":", fontsize=10, fontweight='bold', color='#4b5563', transform=ax.transAxes)
+                    ax.text(0.38, y_pos, f"{poids_tot:.2f} kg", fontsize=10, fontweight='bold', transform=ax.transAxes)
+                    y_pos -= 0.03
+                
                 ax.text(0.05, y_pos, "RENDEMENT", fontsize=10, fontweight='bold', color='#4b5563', transform=ax.transAxes)
                 ax.text(0.35, y_pos, ":", fontsize=10, fontweight='bold', color='#4b5563', transform=ax.transAxes)
                 ax.text(0.38, y_pos, f"{metrics.get('rendement', 0):.1f} %", fontsize=10, fontweight='bold', color='#16a34a', transform=ax.transAxes)
@@ -223,9 +237,10 @@ def generer_rapport_pdf(resultats, nom_projet, metrics):
             # En-tête du tableau (Fond gris clair moderne)
             ax.add_patch(patches.Rectangle((0.05, y_pos-0.01), 0.9, 0.025, facecolor='#f3f4f6', edgecolor='#d1d5db', linewidth=0.5, transform=ax.transAxes, clip_on=False))
             ax.text(0.06, y_pos, "PROFIL", fontsize=9, fontweight='bold', color='#374151', transform=ax.transAxes)
-            ax.text(0.40, y_pos, "FINITION", fontsize=9, fontweight='bold', color='#374151', transform=ax.transAxes)
-            ax.text(0.65, y_pos, "LONGUEUR", fontsize=9, fontweight='bold', color='#374151', transform=ax.transAxes)
-            ax.text(0.90, y_pos, "QTÉ", fontsize=9, fontweight='bold', color='#374151', ha='center', transform=ax.transAxes)
+            ax.text(0.35, y_pos, "FINITION", fontsize=9, fontweight='bold', color='#374151', transform=ax.transAxes)
+            ax.text(0.58, y_pos, "LONGUEUR", fontsize=9, fontweight='bold', color='#374151', ha='right', transform=ax.transAxes)
+            ax.text(0.78, y_pos, "POIDS", fontsize=9, fontweight='bold', color='#374151', ha='right', transform=ax.transAxes)
+            ax.text(0.93, y_pos, "QTÉ", fontsize=9, fontweight='bold', color='#374151', ha='right', transform=ax.transAxes)
             y_pos -= 0.03
             
             # Remplissage des Lignes (avec vérification d'espace disponible)
@@ -238,10 +253,15 @@ def generer_rapport_pdf(resultats, nom_projet, metrics):
                 ax.text(0.06, y_pos, str(cmd['profil']), fontsize=9, color='#111827', transform=ax.transAxes)
                 
                 finition = str(cmd['couleur']) if cmd['couleur'] else "Brut"
-                ax.text(0.40, y_pos, finition, fontsize=9, color='#6b7280' if finition=="Brut" else '#111827', transform=ax.transAxes)
+                ax.text(0.35, y_pos, finition, fontsize=9, color='#6b7280' if finition=="Brut" else '#111827', transform=ax.transAxes)
                 
-                ax.text(0.65, y_pos, f"{cmd['longueur']:g} mm", fontsize=9, color='#111827', transform=ax.transAxes)
-                ax.text(0.90, y_pos, f"{cmd['qte']}", fontsize=10, fontweight='bold', color='#111827', ha='center', transform=ax.transAxes)
+                ax.text(0.58, y_pos, f"{cmd['longueur']:g} mm", fontsize=9, color='#111827', ha='right', transform=ax.transAxes)
+                
+                # CTO FIX : Affichage du poids (avec tiret propre si aucun poids n'est défini dans la DB)
+                poids_str = f"{cmd['poids']:.2f} kg" if cmd['poids'] > 0 else "-"
+                ax.text(0.78, y_pos, poids_str, fontsize=9, color='#111827', ha='right', transform=ax.transAxes)
+                
+                ax.text(0.93, y_pos, f"{cmd['qte']}", fontsize=10, fontweight='bold', color='#111827', ha='right', transform=ax.transAxes)
                 
                 # Ligne séparatrice fine
                 ax.plot([0.05, 0.95], [y_pos-0.012, y_pos-0.012], color='#e5e7eb', lw=0.5, transform=ax.transAxes)
