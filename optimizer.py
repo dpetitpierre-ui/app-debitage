@@ -34,6 +34,10 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame, chute_minimu
         couleur = profil.get('Couleur', '')
         if pd.isna(couleur): couleur = ''
         
+        # AJOUT CTO : Récupération du poids au mètre
+        poids_ml = profil.get('Poids (kg/m)', 0.0)
+        if pd.isna(poids_ml): poids_ml = 0.0
+        
         if pd.isna(longueur_peinture): longueur_peinture = 0.0
         
         pieces_du_profil = df_pieces[df_pieces['Profil'] == nom_profil]
@@ -123,7 +127,8 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame, chute_minimu
                 "section_b": sec_b, 
                 "longueur_peinture": longueur_peinture,
                 "longueur_barre_standard": longueur_barre_standard,
-                "couleur": str(couleur).strip()
+                "couleur": str(couleur).strip(),
+                "poids_ml": float(poids_ml)
             }
             continue
 
@@ -203,7 +208,8 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame, chute_minimu
                 "section_b": sec_b, 
                 "longueur_peinture": longueur_peinture,
                 "longueur_barre_standard": longueur_barre_standard,
-                "couleur": str(couleur).strip()
+                "couleur": str(couleur).strip(),
+                "poids_ml": float(poids_ml)
             }
         else:
             resultats_finaux[nom_profil] = {
@@ -213,7 +219,8 @@ def optimiser_projet_complet(df_pieces, df_profils, epaisseur_lame, chute_minimu
                 "section_b": sec_b, 
                 "longueur_peinture": longueur_peinture,
                 "longueur_barre_standard": longueur_barre_standard,
-                "couleur": str(couleur).strip()
+                "couleur": str(couleur).strip(),
+                "poids_ml": float(poids_ml)
             }
 
     return resultats_finaux
